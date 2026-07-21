@@ -10,6 +10,8 @@ import { EmbeddedServerError, ServerStartupError, ServerStartupTimeoutError } fr
 import { openBrowser } from "./utils/openBrowser";
 import { hasExited, waitForExit } from "./utils/waitForExit";
 import { withAbort } from "./utils/withAbort";
+import { noopLogger } from "./Logger";
+import type { Logger } from "./Logger";
 
 const SERVER_URL_PREFIX = "Server available on: ";
 const STDERR_GRACE_MS = 5_000;
@@ -103,6 +105,10 @@ export class EmbeddedServer extends EventEmitter {
     private _serverOptions: ServerOptions | null = null;
     private readonly _documentStores = new Map<string, Promise<IDocumentStore>>();
 
+    private get _log(): Logger {
+        return this._serverOptions?.logger ?? noopLogger;
+    }
+
     public async startServer(options?: ServerOptions): Promise<void> {
         if (this._serverTask) {
             throw new EmbeddedServerError("The server was already started");
@@ -177,6 +183,7 @@ export class EmbeddedServer extends EventEmitter {
 
         let storePromise = this._documentStores.get(databaseName);
         if (!storePromise) {
+            this._log.debug(`Creating document store for '${databaseName}'.`);
             storePromise = this._createDocumentStore(options, databaseName);
             storePromise.catch(() => {});
             this._documentStores.set(databaseName, storePromise);
@@ -240,6 +247,8 @@ export class EmbeddedServer extends EventEmitter {
     private async _runServer(options: ServerOptions): Promise<ServerHandle> {
         const serverProcess = await RavenServerRunner.run(options);
 
+        this._log.debug(`Starting global server: ${serverProcess.pid ?? "<no PID>"}`);
+
         serverProcess.stdin?.on("error", () => {
             // swallow EPIPE/write-after-end when the server died mid-shutdown
         });
@@ -275,7 +284,8 @@ export class EmbeddedServer extends EventEmitter {
             ? {
                 certificate: security.clientCertificate,
                 type: security.clientCertificateType,
-                password: security.certificatePassword
+                password: security.certificatePassword,
+                ca: security.ca
             } as IStoreAuthOptions
             : undefined;
 
@@ -309,7 +319,8 @@ export class EmbeddedServer extends EventEmitter {
             await store.maintenance.server.send(new CreateDatabaseOperation(options.databaseRecord));
         } catch (error: unknown) {
             if ((error as Error)?.name === "ConcurrencyException") {
-                return; // expected when the database already exists
+                this._log.debug(`${options.databaseRecord.databaseName} already exists.`);
+                return;
             }
             throw error;
         }
@@ -320,15 +331,18 @@ export class EmbeddedServer extends EventEmitter {
             return;
         }
 
+        const gracefulTimeout = this._serverOptions?.gracefulShutdownTimeout ?? 30_000;
         try {
+            this._log.debug(`Try shutdown server PID ${serverProcess.pid} gracefully.`);
             serverProcess.stdin?.write("shutdown no-confirmation\n");
             serverProcess.stdin?.end();
 
-            if (await waitForExit(serverProcess, this._serverOptions?.gracefulShutdownTimeout ?? 30_000)) {
+            if (await waitForExit(serverProcess, gracefulTimeout)) {
                 return;
             }
-        } catch {
-            // stdin may already be closed
+            this._log.warn(`Failed to shutdown server PID ${serverProcess.pid} gracefully in ${gracefulTimeout}ms`);
+        } catch (error: unknown) {
+            this._log.warn(`Failed to shutdown server PID ${serverProcess.pid} gracefully in ${gracefulTimeout}ms`, error);
         }
 
         await this._killServerProcess(serverProcess);
@@ -339,11 +353,16 @@ export class EmbeddedServer extends EventEmitter {
             return;
         }
 
+        const killTimeout = this._serverOptions?.processKillTimeout ?? 5_000;
         try {
+            this._log.debug(`Killing global server PID ${serverProcess.pid}.`);
             serverProcess.kill("SIGKILL");
-            await waitForExit(serverProcess, this._serverOptions?.processKillTimeout ?? 5_000);
-        } catch {
+            if (!await waitForExit(serverProcess, killTimeout)) {
+                this._log.info(`Process ${serverProcess.pid} did not exit after kill within ${killTimeout}ms.`);
+            }
+        } catch (error: unknown) {
             // process may have died in the meantime
+            this._log.warn(`Failed to kill process ${serverProcess.pid}`, error);
         }
     }
 }

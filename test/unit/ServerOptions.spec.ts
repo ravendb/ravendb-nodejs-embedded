@@ -60,4 +60,15 @@ describe("ServerOptions.secured", () => {
         expect(() => options.secured(pfxPath, undefined, "AB")).toThrow(/already been setup/);
         fs.rmSync(dir, { recursive: true, force: true });
     });
+
+    it("reads the CA bundle when caCertificatePath is provided", () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-"));
+        const pfxPath = path.join(dir, "cert.pfx");
+        const caPath = path.join(dir, "ca.pem");
+        fs.writeFileSync(pfxPath, Buffer.from([0x30]));
+        fs.writeFileSync(caPath, "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n");
+        const options = new ServerOptions().secured(pfxPath, "pass", "AB", caPath);
+        expect(options.security!.ca).toEqual(fs.readFileSync(caPath));
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
 });

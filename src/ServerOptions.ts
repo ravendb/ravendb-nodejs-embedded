@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { X509Certificate } from "node:crypto";
 import { EmbeddedServerError } from "./Errors";
+import type { Logger } from "./Logger";
 
 export class LicensingOptions {
     public license?: string;
@@ -19,6 +20,7 @@ export interface SecurityOptions {
     clientCertificate: Buffer;
     clientCertificateType: "pem" | "pfx";
     serverCertificateThumbprint: string;
+    ca?: Buffer;
 }
 
 export class ServerOptions {
@@ -34,8 +36,9 @@ export class ServerOptions {
     public commandLineArgs: string[] = [];
     public licensing = new LicensingOptions();
     public security?: SecurityOptions;
+    public logger?: Logger;
 
-    public secured(certificate: string, certPassword?: string, serverCertThumbprint?: string): this {
+    public secured(certificate: string, certPassword?: string, serverCertThumbprint?: string, caCertificatePath?: string): this {
         if (!certificate) {
             throw new EmbeddedServerError("certificate cannot be null");
         }
@@ -63,7 +66,8 @@ export class ServerOptions {
             certificatePassword: certPassword,
             clientCertificate: raw,
             clientCertificateType: isPem ? "pem" : "pfx",
-            serverCertificateThumbprint: thumbprint
+            serverCertificateThumbprint: thumbprint,
+            ca: caCertificatePath !== undefined ? fs.readFileSync(caCertificatePath) : undefined
         };
 
         return this;

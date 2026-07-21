@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { EmbeddedServer, waitForServerUrl } from "../../src/EmbeddedServer";
 import { ServerOptions } from "../../src/ServerOptions";
 import { ServerStartupError, ServerStartupTimeoutError } from "../../src/Errors";
@@ -101,5 +104,48 @@ describe("shutdown", () => {
         child.stdin!.end();
         await new Promise(resolve => setTimeout(resolve, 100)); // let any async error surface
         expect(true).toBe(true);
+    });
+});
+
+describe("logging", () => {
+    it("logs server lifecycle through the injected logger", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-log-"));
+        const fakeServerDir = path.join(tempDir, "server");
+        fs.mkdirSync(fakeServerDir, { recursive: true });
+        // node executes any file path as JS, so a scripted "Raven.Server.dll" launched
+        // via dotNetPath=node acts as a full fake server honoring the shutdown command
+        fs.writeFileSync(path.join(fakeServerDir, "Raven.Server.dll"),
+            "console.log('Server available on: http://127.0.0.1:9999');" +
+            "process.stdin.on('data', d => { if (String(d).includes('shutdown')) process.exit(0); });" +
+            "setInterval(() => {}, 1000);");
+
+        const entries: string[] = [];
+        const logger = {
+            debug: (m: string) => entries.push(`debug:${m}`),
+            info: (m: string) => entries.push(`info:${m}`),
+            warn: (m: string) => entries.push(`warn:${m}`)
+        };
+
+        const server = new EmbeddedServer();
+        const options = new ServerOptions();
+        options.serverDirectory = fakeServerDir;
+        options.dataDirectory = path.join(tempDir, "data");
+        options.logsPath = path.join(tempDir, "logs");
+        options.dotNetPath = process.execPath;
+        options.frameworkVersion = null;
+        options.logger = logger;
+
+        try {
+            await server.startServer(options);
+            expect(await server.getServerUri()).toBe("http://127.0.0.1:9999");
+            await server.stopServer();
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+
+        expect(entries.some(e => e.startsWith("debug:Starting global server:"))).toBe(true);
+        expect(entries.some(e => e.startsWith("debug:Try shutdown server PID"))).toBe(true);
+        expect(entries.some(e => e.startsWith("warn:"))).toBe(false);
     });
 });
