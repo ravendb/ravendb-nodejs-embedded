@@ -1,0 +1,70 @@
+name: tests/node
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  schedule:
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      ravendb_version:
+        description: 'RavenDB Version'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      RAVENDB_BUILD_TYPE: nightly
+      RAVEN_License: ${{ secrets.RAVEN_LICENSE }}
+
+    strategy:
+      matrix:
+        node-version: [22.x, 24.x]
+        serverVersion: ["6.2", "7.1", "7.2"]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'pnpm'
+
+    - name: Download RavenDB Server
+      run: |
+        if [[ -n "${{ inputs.ravendb_version }}" ]]; then
+          wget -O RavenDB.tar.bz2 "https://daily-builds.s3.amazonaws.com/RavenDB-${{ inputs.ravendb_version }}-linux-x64.tar.bz2"
+        else
+          wget -O RavenDB.tar.bz2 "https://hibernatingrhinos.com/downloads/RavenDB%20for%20Linux%20x64/latest?buildType=${{ env.RAVENDB_BUILD_TYPE }}&version=${{ matrix.serverVersion }}"
+        fi
+
+    - name: Extract RavenDB Server
+      run: |
+        tar xjf RavenDB.tar.bz2
+        mv RavenDB RavenDBServer
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Build
+      run: pnpm run build
+
+    - name: Run unit tests
+      run: pnpm run test:unit
+
+    - name: Run integration tests
+      run: pnpm run test:integration
