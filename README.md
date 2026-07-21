@@ -40,9 +40,34 @@ Instantiate `new EmbeddedServer()` for isolated servers (e.g. tests).
 options.secured("/path/to/cert.pem");
 // PFX: Node cannot parse PKCS#12, pass the thumbprint explicitly:
 options.secured("/path/to/cert.pfx", "password", "<server cert thumbprint>");
+// Self-signed certificate: pass its PEM as the CA bundle so the client trusts it
+// (the counterpart of C#'s RemoteCertificateValidationCallback):
+options.secured("/path/to/cert.pfx", "password", "<thumbprint>", "/path/to/cert.pem");
 ```
+
+The certificate must carry `keyUsage=digitalSignature` and
+`extendedKeyUsage=serverAuth` (RavenDB validates both); add `clientAuth` when
+the same certificate is used as the client certificate.
+
+## Logging
+
+Silent by default. Inject any logger implementing `debug`/`info`/`warn`:
+
+```ts
+import type { Logger } from "ravendb-embedded";
+
+options.logger = {
+    debug: message => console.debug(message),
+    info: message => console.info(message),
+    warn: (message, error) => console.warn(message, error)
+};
+```
+
+Log points mirror the C# package: server start (PID), graceful shutdown,
+kill fallback, document store creation, database-already-exists.
 
 ## Tests
 
 - `pnpm test:unit` — no server needed
-- `pnpm test:integration` — requires binaries in `./RavenDBServer`
+- `pnpm test:integration` — requires binaries in `./RavenDBServer`;
+  the secured scenario additionally requires `openssl` on PATH (skipped otherwise)
