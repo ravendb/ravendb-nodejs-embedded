@@ -1,0 +1,24 @@
+{
+  "name": "ravendb-embedded",
+  "version": "0.1.0",
+  "description": "RavenDB embedded server for Node.js — runs a local RavenDB server as a child process",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration"
+  },
+  "peerDependencies": {
+    "ravendb": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "ravendb": "^7.2.5",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "private": true
+}
