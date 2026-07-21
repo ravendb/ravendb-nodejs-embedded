@@ -7,7 +7,8 @@ import { ServerOptions } from "../../src/ServerOptions";
 
 const serverDir = path.join(process.cwd(), "RavenDBServer");
 const hasServer = ["Raven.Server.exe", "Raven.Server", "Raven.Server.dll"]
-    .some(file => fs.existsSync(path.join(serverDir, file)));
+    .some(file => fs.existsSync(path.join(serverDir, file))
+        || fs.existsSync(path.join(serverDir, "Server", file)));
 
 interface User {
     name: string;

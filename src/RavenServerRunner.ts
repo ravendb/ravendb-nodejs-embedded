@@ -29,17 +29,31 @@ export class RavenServerRunner {
     }
 
     public static async getExecAndArgs(options: ServerOptions): Promise<{ exec: string; prefixArgs: string[] }> {
-        const executable = path.join(
-            options.serverDirectory,
-            process.platform === "win32" ? "Raven.Server.exe" : "Raven.Server");
+        const executableName = process.platform === "win32" ? "Raven.Server.exe" : "Raven.Server";
 
-        if (fs.existsSync(executable)) {
-            return { exec: executable, prefixArgs: [] };
+        // The distribution zip from ravendb.net nests binaries in a "Server" subdirectory,
+        // while the C# NuGet layout keeps them flat — accept both.
+        const candidateDirectories = [
+            options.serverDirectory,
+            path.join(options.serverDirectory, "Server")
+        ];
+
+        let serverDllPath: string | null = null;
+        for (const directory of candidateDirectories) {
+            const executable = path.join(directory, executableName);
+            if (fs.existsSync(executable)) {
+                return { exec: executable, prefixArgs: [] };
+            }
+
+            const dllPath = path.join(directory, "Raven.Server.dll");
+            if (serverDllPath === null && fs.existsSync(dllPath)) {
+                serverDllPath = dllPath;
+            }
         }
 
-        const serverDllPath = path.join(options.serverDirectory, "Raven.Server.dll");
-        if (!fs.existsSync(serverDllPath)) {
-            throw new EmbeddedServerError(`Server file was not found: ${serverDllPath}`);
+        if (serverDllPath === null) {
+            throw new EmbeddedServerError(
+                `Server file was not found: ${path.join(options.serverDirectory, "Raven.Server.dll")}`);
         }
 
         if (!options.dotNetPath?.trim()) {

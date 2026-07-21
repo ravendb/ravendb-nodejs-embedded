@@ -9,6 +9,8 @@ Node.js port of the C# `RavenDB.Embedded` package.
 - RavenDB server binaries extracted into `./RavenDBServer` (or any directory
   passed via `serverOptions.serverDirectory`). Download from
   https://ravendb.net/download. This package does not download the server.
+  The distribution zip can be extracted as-is — its nested `Server/`
+  subdirectory is detected automatically.
 - When only `Raven.Server.dll` is present (no native executable), a .NET
   runtime matching `serverOptions.frameworkVersion` must be installed.
 

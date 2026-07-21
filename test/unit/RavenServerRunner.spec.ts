@@ -87,6 +87,28 @@ describe("RavenServerRunner.getExecAndArgs", () => {
         expect(prefixArgs).toEqual([dllPath]);
     });
 
+    it("finds the executable in the Server subdirectory (distribution zip layout)", async () => {
+        const options = makeOptions(tempDir);
+        const nestedDir = path.join(options.serverDirectory, "Server");
+        fs.mkdirSync(nestedDir, { recursive: true });
+        const exePath = path.join(nestedDir, exeName);
+        fs.writeFileSync(exePath, "");
+        const { exec, prefixArgs } = await RavenServerRunner.getExecAndArgs(options);
+        expect(exec).toBe(exePath);
+        expect(prefixArgs).toEqual([]);
+    });
+
+    it("finds Raven.Server.dll in the Server subdirectory", async () => {
+        const options = makeOptions(tempDir);
+        const nestedDir = path.join(options.serverDirectory, "Server");
+        fs.mkdirSync(nestedDir, { recursive: true });
+        const dllPath = path.join(nestedDir, "Raven.Server.dll");
+        fs.writeFileSync(dllPath, "");
+        const { exec, prefixArgs } = await RavenServerRunner.getExecAndArgs(options);
+        expect(exec).toBe("dotnet");
+        expect(prefixArgs).toEqual([dllPath]);
+    });
+
     it("throws when no server files exist", async () => {
         const options = makeOptions(tempDir);
         await expect(RavenServerRunner.getExecAndArgs(options)).rejects.toThrow(/Server file was not found/);
