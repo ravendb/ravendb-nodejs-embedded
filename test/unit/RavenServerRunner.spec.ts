@@ -61,6 +61,33 @@ describe("RavenServerRunner.buildCommandLineArgs", () => {
         expect(args).toContain("--Security.Certificate.Password=secret");
         expect(args).toContain("--Security.WellKnownCertificates.Admin=THUMB");
         expect(args).toContain("--ServerUrl=https://127.0.0.1:0");
+        expect(args.some(a => a.startsWith("--Security.Certificate.Load.Exec"))).toBe(false);
+    });
+
+    it("emits Load.Exec args for the exec variant and no certificate path/password", () => {
+        const options = makeOptions(tempDir);
+        const clientCertPath = path.join(tempDir, "client.pfx");
+        fs.writeFileSync(clientCertPath, Buffer.from([0x30]));
+        options.securedWithExec("vault-cli", "get --cert server", "THUMB", clientCertPath, "secret");
+
+        const args = RavenServerRunner.buildCommandLineArgs(options);
+        expect(args).toContain("--Security.Certificate.Load.Exec=vault-cli");
+        expect(args).toContain("--Security.Certificate.Load.Exec.Arguments=get --cert server");
+        expect(args).toContain("--Security.WellKnownCertificates.Admin=THUMB");
+        expect(args).toContain("--ServerUrl=https://127.0.0.1:0");
+        expect(args.some(a => a.startsWith("--Security.Certificate.Path"))).toBe(false);
+        expect(args.some(a => a.startsWith("--Security.Certificate.Password"))).toBe(false);
+    });
+
+    it("omits the Load.Exec.Arguments arg when certExecArgs is empty", () => {
+        const options = makeOptions(tempDir);
+        const clientCertPath = path.join(tempDir, "client.pfx");
+        fs.writeFileSync(clientCertPath, Buffer.from([0x30]));
+        options.securedWithExec("vault-cli", "", "THUMB", clientCertPath);
+
+        const args = RavenServerRunner.buildCommandLineArgs(options);
+        expect(args).toContain("--Security.Certificate.Load.Exec=vault-cli");
+        expect(args.some(a => a.startsWith("--Security.Certificate.Load.Exec.Arguments"))).toBe(false);
     });
 });
 

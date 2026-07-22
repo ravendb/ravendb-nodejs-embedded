@@ -1,8 +1,31 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ServerOptions } from "../../src/ServerOptions";
+
+// self-signed throwaway certificate (CN=ravendb-embedded-test, 2026-2036), no key material
+const TEST_PEM_CERT = `-----BEGIN CERTIFICATE-----
+MIIDITCCAgmgAwIBAgIUQInzqVVxQjspLtKHui7sESZyKJQwDQYJKoZIhvcNAQEL
+BQAwIDEeMBwGA1UEAwwVcmF2ZW5kYi1lbWJlZGRlZC10ZXN0MB4XDTI2MDcyMjA1
+NDIwOFoXDTM2MDcxOTA1NDIwOFowIDEeMBwGA1UEAwwVcmF2ZW5kYi1lbWJlZGRl
+ZC10ZXN0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArjCmBu1QHqX2
+XxGpVVEFS9i2Ty9EikrOpDacx5OQ/N74BR3RGqTczJ/LM2pYC+sY3sMZo7u3uvvm
+Exah9bSKrZc/sWJb2YymVe0T4lqq+2DhOMQ3SvGelWZ7+f6MK6ktXlI8aJMbDw9l
+osUIsjNBq6vVlAsPCK2WN09V2qc18BXPjBEPpW+aJioEsj/Vc8HWba2QinrvN+iN
+KhUS/CHCIs3qtd7HzfXfjRBe410daGn4M5W23Zg2tEhqgaufxP8GWhgFdcCbrlsy
+zczCavhF8OhfaZ61yChwsF5z6mGGarh6eWOaoKU38wt5+bzLwxPlmsuGrG/T+FsW
+mbUIidmNtwIDAQABo1MwUTAdBgNVHQ4EFgQU+hRqxsYcIRpKy5aj2E+1qlSjXWEw
+HwYDVR0jBBgwFoAU+hRqxsYcIRpKy5aj2E+1qlSjXWEwDwYDVR0TAQH/BAUwAwEB
+/zANBgkqhkiG9w0BAQsFAAOCAQEACr8hr0fLCJ0c60sLnsuFEe4fLTt4qWMe/mkc
+tuIsJ1XTrVYK2U+WxglB6YwDWiKMCX/hccmOQVK+d2xnjdtD+hkMXWu/Ph8xN4kT
+c2Wl+QF9H9gvokWBVSVcDCDG9gQfIp4AGFWiikvEo/HpaZQf7ct+TZeozWmGnek4
+oYopBeSwsWn+uvdyu7Msd+NPEevV5/qCEkT0uo48hGfhwM26V8MzhlX3uFZt++SO
+QV5oEsAZ4CLgtTklGIUKq/m4J8wnVFV0zoGgN6wqN/cR/ngtK5k82J2Df37w+jJ2
+otE4a0mRPEhTKOPfVh2LA/y8vOx7Sj1OWvmYAOUzO7lCfXX/jA==
+-----END CERTIFICATE-----
+`;
+const TEST_PEM_THUMBPRINT = "5AC4716B7FDF76C5824054EE5F7A4EFB3039D1DD";
 
 describe("ServerOptions defaults", () => {
     it("mirrors the C# defaults", () => {
@@ -61,6 +84,26 @@ describe("ServerOptions.secured", () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
+    it("computes the SHA-1 thumbprint of a PEM certificate and uses it for both thumbprints", () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-"));
+        const pemPath = path.join(dir, "cert.pem");
+        fs.writeFileSync(pemPath, TEST_PEM_CERT);
+        const options = new ServerOptions().secured(pemPath);
+        expect(options.security!.clientCertificateType).toBe("pem");
+        expect(options.security!.serverCertificateThumbprint).toBe(TEST_PEM_THUMBPRINT);
+        expect(options.security!.clientCertificateThumbprint).toBe(TEST_PEM_THUMBPRINT);
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("mentions how to compute the thumbprint in the PFX error", () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-"));
+        const pfxPath = path.join(dir, "cert.pfx");
+        fs.writeFileSync(pfxPath, Buffer.from([0x30, 0x82, 0x01, 0x00]));
+        expect(() => new ServerOptions().secured(pfxPath, "pass"))
+            .toThrow(/openssl pkcs12.*Get-PfxCertificate/s);
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
     it("reads the CA bundle when caCertificatePath is provided", () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-"));
         const pfxPath = path.join(dir, "cert.pfx");
@@ -70,5 +113,67 @@ describe("ServerOptions.secured", () => {
         const options = new ServerOptions().secured(pfxPath, "pass", "AB", caPath);
         expect(options.security!.ca).toEqual(fs.readFileSync(caPath));
         fs.rmSync(dir, { recursive: true, force: true });
+    });
+});
+
+describe("ServerOptions.securedWithExec", () => {
+    let dir: string;
+    beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-")); });
+    afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+    function writeClientPem(): string {
+        const pemPath = path.join(dir, "client.pem");
+        fs.writeFileSync(pemPath, TEST_PEM_CERT);
+        return pemPath;
+    }
+
+    it("validates required arguments", () => {
+        const pemPath = writeClientPem();
+        expect(() => new ServerOptions().securedWithExec("", "args", "THUMB", pemPath))
+            .toThrow(/certLoadExec/);
+        expect(() => new ServerOptions().securedWithExec("vault-cli", "args", "", pemPath))
+            .toThrow(/serverCertThumbprint/);
+        expect(() => new ServerOptions().securedWithExec("vault-cli", "args", "THUMB", ""))
+            .toThrow(/clientCertificate/);
+    });
+
+    it("throws when security has already been set up", () => {
+        const pemPath = writeClientPem();
+        const options = new ServerOptions().securedWithExec("vault-cli", "args", "THUMB", pemPath);
+        expect(() => options.securedWithExec("vault-cli", "args", "THUMB", pemPath))
+            .toThrow(/already been setup/);
+    });
+
+    it("stores the exec settings and computes the client thumbprint from a PEM certificate", () => {
+        const pemPath = writeClientPem();
+        const options = new ServerOptions()
+            .securedWithExec("vault-cli", "get --cert server", "SERVERTHUMB", pemPath);
+        const security = options.security!;
+        expect(security.certificateLoadExec).toBe("vault-cli");
+        expect(security.certificateLoadExecArguments).toBe("get --cert server");
+        expect(security.certificatePath).toBeUndefined();
+        expect(security.clientCertificateType).toBe("pem");
+        expect(security.clientCertificateThumbprint).toBe(TEST_PEM_THUMBPRINT);
+        expect(security.serverCertificateThumbprint).toBe("SERVERTHUMB");
+    });
+
+    it("falls back to the server thumbprint for a PFX client certificate", () => {
+        const pfxPath = path.join(dir, "client.pfx");
+        fs.writeFileSync(pfxPath, Buffer.from([0x30, 0x82, 0x01, 0x00]));
+        const options = new ServerOptions()
+            .securedWithExec("vault-cli", "args", "SERVERTHUMB", pfxPath, "pass");
+        const security = options.security!;
+        expect(security.clientCertificateType).toBe("pfx");
+        expect(security.clientCertificateThumbprint).toBe("SERVERTHUMB");
+        expect(security.certificatePassword).toBe("pass");
+    });
+
+    it("reads the CA bundle when caCertificatePath is provided", () => {
+        const pemPath = writeClientPem();
+        const caPath = path.join(dir, "ca.pem");
+        fs.writeFileSync(caPath, "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n");
+        const options = new ServerOptions()
+            .securedWithExec("vault-cli", "args", "THUMB", pemPath, undefined, caPath);
+        expect(options.security!.ca).toEqual(fs.readFileSync(caPath));
     });
 });

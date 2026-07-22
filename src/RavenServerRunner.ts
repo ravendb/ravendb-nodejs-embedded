@@ -114,11 +114,21 @@ export class RavenServerRunner {
             if (!options.serverUrl?.trim()) {
                 options.serverUrl = "https://127.0.0.1:0";
             }
-            args.push(`--Security.Certificate.Path=${security.certificatePath}`);
-            if (security.certificatePassword !== undefined) {
-                args.push(`--Security.Certificate.Password=${security.certificatePassword}`);
+            if (security.certificateLoadExec) {
+                args.push(`--Security.Certificate.Load.Exec=${security.certificateLoadExec}`);
+                if (security.certificateLoadExecArguments?.trim()) {
+                    args.push(`--Security.Certificate.Load.Exec.Arguments=${security.certificateLoadExecArguments}`);
+                }
+            } else if (security.certificatePath) {
+                args.push(`--Security.Certificate.Path=${security.certificatePath}`);
+                if (security.certificatePassword !== undefined) {
+                    args.push(`--Security.Certificate.Password=${security.certificatePassword}`);
+                }
+            } else {
+                throw new EmbeddedServerError(
+                    "SecurityOptions must specify either certificatePath or certificateLoadExec");
             }
-            args.push(`--Security.WellKnownCertificates.Admin=${security.serverCertificateThumbprint}`);
+            args.push(`--Security.WellKnownCertificates.Admin=${security.clientCertificateThumbprint}`);
         } else if (!options.serverUrl?.trim()) {
             options.serverUrl = "http://127.0.0.1:0";
         }
