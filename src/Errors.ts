@@ -23,3 +23,16 @@ export class ServerStartupTimeoutError extends ServerStartupError {
         this.name = "ServerStartupTimeoutError";
     }
 }
+
+export class ServerDownloadError extends EmbeddedServerError {
+    public readonly url?: string;
+
+    public constructor(message: string, url?: string, cause?: unknown) {
+        super(url ? `${message} (url: ${url})` : message);
+        this.name = "ServerDownloadError";
+        this.url = url;
+        if (cause !== undefined) {
+            (this as { cause?: unknown }).cause = cause;
+        }
+    }
+}

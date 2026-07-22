@@ -28,6 +28,13 @@ export class ServerOptions {
     public logsPath = path.join(process.cwd(), "RavenDB", "Logs");
     public dataDirectory = path.join(process.cwd(), "RavenDB");
     public serverDirectory = path.join(process.cwd(), "RavenDBServer");
+    // Auto-download (no C# counterpart — the NuGet package ships the binaries as contentFiles;
+    // here they are fetched on demand, Puppeteer-style, and cached per version+platform).
+    // "latest" resolves the current stable once, then stays pinned in the cache marker so
+    // later runs are offline and deterministic; pin serverVersion to move to another release.
+    public serverVersion = "latest";
+    public downloadServer = true;
+    public downloadCacheDirectory?: string;
     public dotNetPath = "dotnet";
     public serverUrl?: string;
     public gracefulShutdownTimeout = 30_000;

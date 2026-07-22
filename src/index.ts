@@ -4,4 +4,6 @@ export type { SecurityOptions } from "./ServerOptions";
 export { noopLogger } from "./Logger";
 export type { Logger } from "./Logger";
 export { DatabaseOptions } from "./DatabaseOptions";
-export { EmbeddedServerError, ServerStartupError, ServerStartupTimeoutError } from "./Errors";
+export { EmbeddedServerError, ServerStartupError, ServerStartupTimeoutError, ServerDownloadError } from "./Errors";
+export { ServerDownloader } from "./ServerDownloader";
+export type { DownloadServerOptions, ServerPlatform } from "./ServerDownloader";

@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { EmbeddedServerError } from "./Errors";
 import { matchFrameworkVersion } from "./RuntimeFrameworkVersionMatcher";
+import { ServerDownloader } from "./ServerDownloader";
 import type { ServerOptions } from "./ServerOptions";
 
 export class RavenServerRunner {
@@ -17,6 +18,10 @@ export class RavenServerRunner {
         if (!options.logsPath?.trim()) {
             throw new EmbeddedServerError("logsPath cannot be null or whitespace");
         }
+
+        // Single choke point for both startServer() and restartServer(): downloads the
+        // server on demand (Puppeteer-style) unless binaries are already in place.
+        await ServerDownloader.ensureServerBinaries(options);
 
         const { exec, prefixArgs } = await this.getExecAndArgs(options);
         const args = [...prefixArgs, ...this.buildCommandLineArgs(options)];
@@ -53,7 +58,10 @@ export class RavenServerRunner {
 
         if (serverDllPath === null) {
             throw new EmbeddedServerError(
-                `Server file was not found: ${path.join(options.serverDirectory, "Raven.Server.dll")}`);
+                `Server file was not found: ${path.join(options.serverDirectory, "Raven.Server.dll")}. ` +
+                "Download the server from https://ravendb.net/download and extract it into serverDirectory, " +
+                "or enable automatic download (ServerOptions.downloadServer = true with licensing.eulaAccepted = true, " +
+                "default serverDirectory, and RAVENDB_EMBEDDED_SKIP_DOWNLOAD unset).");
         }
 
         if (!options.dotNetPath?.trim()) {

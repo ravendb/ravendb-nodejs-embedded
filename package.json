@@ -4,7 +4,10 @@
   "description": "RavenDB embedded server for Node.js — runs a local RavenDB server as a child process",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "bin": {
+    "ravendb-embedded-install": "bin/install.js"
+  },
+  "files": ["dist", "bin"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
