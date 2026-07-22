@@ -136,7 +136,10 @@ export class EmbeddedServer extends EventEmitter {
             throw new EmbeddedServerError("The server was already started");
         }
 
-        this._serverOptions = options ?? new ServerOptions();
+        // Snapshot the options: startup resolves serverDirectory (auto-download) and
+        // serverUrl internally, and the caller's object must not be mutated by that —
+        // nor should later caller-side edits leak into a running server.
+        this._serverOptions = EmbeddedServer._cloneOptions(options ?? new ServerOptions());
 
         if (this._serverOptions.installSignalHandlers) {
             this._installSignalHandlers();
@@ -147,6 +150,13 @@ export class EmbeddedServer extends EventEmitter {
         this._serverTask = task;
 
         await task;
+    }
+
+    private static _cloneOptions(source: ServerOptions): ServerOptions {
+        const clone: ServerOptions = Object.assign(Object.create(Object.getPrototypeOf(source)), source);
+        clone.commandLineArgs = [...source.commandLineArgs];
+        clone.licensing = Object.assign(Object.create(Object.getPrototypeOf(source.licensing)), source.licensing);
+        return clone;
     }
 
     public async restartServer(): Promise<void> {

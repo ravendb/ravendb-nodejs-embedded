@@ -12,6 +12,24 @@ function fakeProcess(script: string) {
     return spawn(process.execPath, ["-e", script]);
 }
 
+// node executes any file path as JS, so a scripted "Raven.Server.dll" launched
+// via dotNetPath=node acts as a full fake server honoring the shutdown command
+function makeFakeServer(tempDir: string): ServerOptions {
+    const fakeServerDir = path.join(tempDir, "server");
+    fs.mkdirSync(fakeServerDir, { recursive: true });
+    fs.writeFileSync(path.join(fakeServerDir, "Raven.Server.dll"),
+        "console.log('Server available on: http://127.0.0.1:9999');" +
+        "process.stdin.on('data', d => { if (String(d).includes('shutdown')) process.exit(0); });" +
+        "setInterval(() => {}, 1000);");
+    const options = new ServerOptions();
+    options.serverDirectory = fakeServerDir;
+    options.dataDirectory = path.join(tempDir, "data");
+    options.logsPath = path.join(tempDir, "logs");
+    options.dotNetPath = process.execPath;
+    options.frameworkVersion = null;
+    return options;
+}
+
 describe("waitForServerUrl", () => {
     it("resolves the URL from the marker line", async () => {
         const child = fakeProcess(
@@ -107,23 +125,39 @@ describe("shutdown", () => {
     });
 });
 
-describe("signal handlers", () => {
-    function makeFakeServer(tempDir: string): ServerOptions {
-        const fakeServerDir = path.join(tempDir, "server");
-        fs.mkdirSync(fakeServerDir, { recursive: true });
-        fs.writeFileSync(path.join(fakeServerDir, "Raven.Server.dll"),
-            "console.log('Server available on: http://127.0.0.1:9999');" +
-            "process.stdin.on('data', d => { if (String(d).includes('shutdown')) process.exit(0); });" +
-            "setInterval(() => {}, 1000);");
-        const options = new ServerOptions();
-        options.serverDirectory = fakeServerDir;
-        options.dataDirectory = path.join(tempDir, "data");
-        options.logsPath = path.join(tempDir, "logs");
-        options.dotNetPath = process.execPath;
-        options.frameworkVersion = null;
-        return options;
-    }
+describe("options snapshot", () => {
+    it("does not mutate the caller's ServerOptions object", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-snap-"));
+        const server = new EmbeddedServer();
+        const options = makeFakeServer(tempDir);
+        try {
+            await server.startServer(options);
+            // startup resolves serverUrl internally; the caller's object must stay untouched
+            expect(options.serverUrl).toBeUndefined();
+            expect(options.serverDirectory).toBe(path.join(tempDir, "server"));
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
 
+    it("ignores caller-side edits made after startServer", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-snap-"));
+        const server = new EmbeddedServer();
+        const options = makeFakeServer(tempDir);
+        try {
+            await server.startServer(options);
+            options.serverDirectory = "Z:\\definitely\\not\\here";
+            await server.restartServer(); // still boots from the snapshotted directory
+            expect(await server.getServerUri()).toBe("http://127.0.0.1:9999");
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("signal handlers", () => {
     it("does not register handlers by default", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-sig-"));
         const before = process.listeners("SIGINT").length;
