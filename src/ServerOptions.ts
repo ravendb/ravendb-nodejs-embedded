@@ -5,9 +5,9 @@ import { EmbeddedServerError } from "./Errors";
 import type { Logger } from "./Logger";
 
 /**
- * The RavenDB server version downloaded by default. Follows the Python/Java
- * embedded packages: the package version, this constant, and the tested client
- * version move together — bump all of them on every release.
+ * The RavenDB server version downloaded by default. The package version, this
+ * constant, and the tested client version move together — bump all of them on
+ * every release.
  */
 export const DEFAULT_SERVER_VERSION = "7.2.5";
 
@@ -15,7 +15,7 @@ export class LicensingOptions {
     public license?: string;
     public licensePath?: string;
     /**
-     * Forwarded to the server as --License.Eula.Accepted (same as C#) — enforcement
+     * Forwarded to the server as --License.Eula.Accepted — enforcement
      * of that flag is the server's business. Additionally, this package refuses to
      * auto-download the server binaries until the EULA is accepted; a manual install
      * in serverDirectory is run as-is.
@@ -36,12 +36,12 @@ export interface SecurityOptions {
     certificateLoadExecArguments?: string;
     clientCertificate: Buffer;
     clientCertificateType: "pem" | "pfx";
-    /** Registered as --Security.WellKnownCertificates.Admin (C# uses ClientCertificate.Thumbprint). */
+    /** Registered as --Security.WellKnownCertificates.Admin. */
     clientCertificateThumbprint: string;
     /**
-     * Kept for C# API parity. The ravendb Node client offers no certificate-validation
-     * hook, so unlike C# this is never used to pin the server certificate — trust the
-     * server via the `ca` option instead.
+     * The ravendb Node client offers no certificate-validation hook, so this is
+     * never used to pin the server certificate — trust the server via the `ca`
+     * option instead.
      */
     serverCertificateThumbprint: string;
     ca?: Buffer;
@@ -62,11 +62,10 @@ export class ServerOptions {
     public logsPath = path.join(process.cwd(), "RavenDB", "Logs");
     public dataDirectory = path.join(process.cwd(), "RavenDB");
     public serverDirectory = path.join(process.cwd(), "RavenDBServer");
-    // Auto-download (no C# counterpart — the NuGet package ships the binaries as contentFiles;
-    // here they are fetched on demand, Puppeteer-style, and cached per version+platform).
-    // Pinned by default (like the Python/Java embedded packages) so builds are
-    // deterministic; set "latest" to opt into resolving the current stable release
-    // (sticky — it stays pinned in the cache marker until the marker is deleted).
+    // Auto-download: server binaries are fetched on demand, Puppeteer-style, and
+    // cached per version+platform. Pinned by default so builds are deterministic;
+    // set "latest" to opt into resolving the current stable release (sticky — it
+    // stays pinned in the cache marker until the marker is deleted).
     public serverVersion = DEFAULT_SERVER_VERSION;
     public downloadServer = true;
     public downloadCacheDirectory?: string;
@@ -78,10 +77,10 @@ export class ServerOptions {
     public commandLineArgs: string[] = [];
     /**
      * Opt-in: register SIGINT/SIGTERM/beforeExit handlers that gracefully shut the
-     * server down before the host process dies (the Node counterpart of the JVM
-     * shutdown hook / Python atexit — those are safe to auto-register, changing
-     * global signal behavior in Node is not). The server-side
-     * --Embedded.ParentProcessId watchdog remains the safety net either way.
+     * server down before the host process dies (off by default because changing
+     * global signal behavior in Node is not safe to do automatically). The
+     * server-side --Embedded.ParentProcessId watchdog remains the safety net
+     * either way.
      */
     public installSignalHandlers = false;
     public licensing = new LicensingOptions();
@@ -145,7 +144,7 @@ export class ServerOptions {
             clientCertificate: raw,
             clientCertificateType: isPem ? "pem" : "pfx",
             // one certificate secures the server and authenticates the client, so both
-            // thumbprints are the same value (mirrors C# Secured(certificate, password))
+            // thumbprints are the same value
             clientCertificateThumbprint: thumbprint,
             serverCertificateThumbprint: thumbprint,
             ca: caCertificatePath !== undefined ? fs.readFileSync(caCertificatePath) : undefined
@@ -157,7 +156,6 @@ export class ServerOptions {
     /**
      * Secures the server with a certificate obtained by running an external program
      * (`--Security.Certificate.Load.Exec`) — for certificates kept in a vault/HSM.
-     * Mirrors C# Secured(certLoadExec, certExecArgs, serverCertThumbprint, clientCert).
      *
      * @param certLoadExec program the server runs to obtain its certificate
      * @param certExecArgs raw arguments string passed to that program

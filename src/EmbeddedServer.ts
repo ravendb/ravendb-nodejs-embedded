@@ -57,7 +57,7 @@ export function waitForServerUrl(serverProcess: ChildProcess, options: ServerOpt
                 : new ServerStartupError(message, stdout, stderr);
         };
 
-        // stderr closed or process exited — give stdout a grace period to still deliver the URL (mirrors C#)
+        // stderr closed or process exited — give stdout a grace period to still deliver the URL
         const failAfterGrace = () => {
             if (settled || graceTimer) {
                 return;
@@ -374,8 +374,8 @@ export class EmbeddedServer extends EventEmitter {
         if (options.conventions) {
             store.conventions = options.conventions;
         }
-        // The node client has no on-disk topology cache (C# DisableTopologyCache has no equivalent);
-        // this flag pins the client to the single spawned embedded node and avoids pointless topology chatter.
+        // The node client has no on-disk topology cache; this flag pins the client to the
+        // single spawned embedded node and avoids pointless topology chatter.
         store.conventions.disableTopologyUpdates = true;
 
         store.once("afterDispose", (callback: () => void) => {

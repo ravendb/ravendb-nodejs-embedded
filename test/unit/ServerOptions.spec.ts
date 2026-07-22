@@ -28,7 +28,7 @@ otE4a0mRPEhTKOPfVh2LA/y8vOx7Sj1OWvmYAOUzO7lCfXX/jA==
 const TEST_PEM_THUMBPRINT = "5AC4716B7FDF76C5824054EE5F7A4EFB3039D1DD";
 
 describe("ServerOptions defaults", () => {
-    it("mirrors the C# defaults", () => {
+    it("has the expected defaults", () => {
         const options = new ServerOptions();
         expect(options.frameworkVersion).toBe("10.0.9+");
         expect(options.dataDirectory).toBe(path.join(process.cwd(), "RavenDB"));
@@ -45,7 +45,7 @@ describe("ServerOptions defaults", () => {
         expect(options.licensing.eulaAccepted).toBe(false);
     });
 
-    it("pins the default server version to the package version (Python/Java embedded convention)", () => {
+    it("pins the default server version to the package version", () => {
         const packageJson = JSON.parse(
             fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"));
         expect(new ServerOptions().serverVersion).toBe(DEFAULT_SERVER_VERSION);

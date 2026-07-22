@@ -37,7 +37,7 @@ export class RavenServerRunner {
         const executableName = process.platform === "win32" ? "Raven.Server.exe" : "Raven.Server";
 
         // The distribution zip from ravendb.net nests binaries in a "Server" subdirectory,
-        // while the C# NuGet layout keeps them flat — accept both.
+        // but a flat layout is also possible — accept both.
         const candidateDirectories = [
             options.serverDirectory,
             path.join(options.serverDirectory, "Server")

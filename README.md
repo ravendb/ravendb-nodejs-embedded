@@ -15,7 +15,7 @@ npm install ravendb-embedded ravendb
 
 No further setup is required: on the first `startServer()` call the package
 downloads the RavenDB server binaries for your platform automatically
-(Puppeteer-style) and caches them per version, as long as
+and caches them per version, as long as
 `licensing.eulaAccepted = true` is set. Download progress is printed to stderr
 so the first run never looks like a hang — inject a `logger` to redirect or
 silence it. Subsequent starts reuse the cache and make no network calls.
@@ -48,27 +48,23 @@ const session = store.openSession();
 await embeddedServer.dispose();
 ```
 
-`embeddedServer` is a shared singleton (like `EmbeddedServer.Instance` in C#).
+`embeddedServer` is a shared singleton.
 Instantiate `new EmbeddedServer()` for isolated servers (e.g. tests).
 
 Runnable samples live in [`examples/`](examples).
 
 > **EULA semantics:** `licensing.eulaAccepted` gates the automatic binaries
-> download and is forwarded to the server as `--License.Eula.Accepted` (same
-> as C#) — enforcement of the flag itself is up to the server. A manual
-> install in `serverDirectory` is run as-is.
+> download and is forwarded to the server as `--License.Eula.Accepted` —
+> enforcement of the flag itself is up to the server. A manual install in
+> `serverDirectory` is run as-is.
 
 > **Options are snapshotted:** `startServer()` takes a copy of the
 > `ServerOptions` object. The caller's object is never mutated (the resolved
 > download directory and server URL stay internal — use `getServerUri()`), and
 > editing it after the call has no effect on the running server.
 
-> **Start semantics vs C#:** `startServer()` awaits the full server startup, so
-> configuration errors surface immediately at the call site. The C#
-> `StartServer()` is fire-and-forget — the server boots in the background and
-> the first `GetDocumentStore()` call does the waiting. Code ported 1:1 from C#
-> will therefore see slightly different timing (errors earlier, first store
-> faster), never different results.
+> **Start semantics:** `startServer()` awaits the full server startup, so
+> configuration errors surface immediately at the call site.
 
 `startServer()` also accepts an `AbortSignal` to cancel a startup in flight —
 the spawned process is torn down immediately:
@@ -90,8 +86,7 @@ options.installSignalHandlers = true;
 On a signal the server is disposed first; the signal is then re-raised only
 when your app has no handler of its own, so the process still exits with the
 conventional exit code — apps with their own handlers keep full control.
-`beforeExit` also disposes the server. This is opt-in (unlike the JVM shutdown
-hook and Python `atexit` equivalents, which auto-register) because it changes
+`beforeExit` also disposes the server. This is opt-in because it changes
 process-global signal behavior.
 
 ### Store documents
@@ -145,8 +140,7 @@ const productNames = await session
 options.secured("/path/to/cert.pem");
 // PFX: Node cannot parse PKCS#12, pass the thumbprint explicitly:
 options.secured("/path/to/cert.pfx", "password", "<server cert thumbprint>");
-// Self-signed certificate: pass its PEM as the CA bundle so the client trusts it
-// (the counterpart of C#'s RemoteCertificateValidationCallback):
+// Self-signed certificate: pass its PEM as the CA bundle so the client trusts it:
 options.secured("/path/to/cert.pfx", "password", "<thumbprint>", "/path/to/cert.pem");
 ```
 
@@ -158,8 +152,7 @@ the same certificate is used as the client certificate.
 
 When the server certificate lives in a vault or HSM instead of a file, let the
 server obtain it by running an external program
-(`--Security.Certificate.Load.Exec`, mirrors the C#
-`Secured(certLoadExec, ...)` overload):
+(`--Security.Certificate.Load.Exec`):
 
 ```ts
 options.securedWithExec(
@@ -179,14 +172,12 @@ same certificate secures the server and authenticates the client).
 
 #### Server certificate trust (no thumbprint pinning)
 
-The C# package pins the server certificate by thumbprint via a global
-`RemoteCertificateValidationCallback`. The `ravendb` Node client exposes no
-certificate-validation hook (its auth options are only
-`type`/`certificate`/`password`/`ca`), so thumbprint pinning is **not
-available** in this package. Trust the server through the `ca` option instead:
-for a self-signed server certificate, its own PEM *is* the CA — pass it as
-`caCertificatePath` (shown above). The `serverCertThumbprint` parameters exist
-for C# API parity and the PFX fallback described above.
+The `ravendb` Node client exposes no certificate-validation hook (its auth
+options are only `type`/`certificate`/`password`/`ca`), so pinning the server
+certificate by thumbprint is **not available** in this package. Trust the
+server through the `ca` option instead: for a self-signed server certificate,
+its own PEM *is* the CA — pass it as `caCertificatePath` (shown above). The
+`serverCertThumbprint` parameters exist for the PFX fallback described above.
 
 ### Logging
 Silent by default, with one exception: automatic server download progress goes
@@ -204,9 +195,8 @@ options.logger = {
 };
 ```
 
-Log points mirror the C# package: server start (PID), graceful shutdown,
-kill fallback, document store creation, database-already-exists — plus
-download progress.
+Log points: server start (PID), graceful shutdown, kill fallback, document
+store creation, database-already-exists — plus download progress.
 
 ## Server download details
 
@@ -217,8 +207,8 @@ download progress.
 - **Version:** `serverOptions.serverVersion` or
   `RAVENDB_EMBEDDED_SERVER_VERSION`. The default is pinned to the server
   release this package version was built and tested against (exported as
-  `DEFAULT_SERVER_VERSION`; the package version tracks it, same as the
-  Python and Java embedded packages), so builds are deterministic. Set
+  `DEFAULT_SERVER_VERSION`; the package version tracks it), so builds are
+  deterministic. Set
   `"latest"` to opt into the current stable release instead — it resolves
   once and then stays pinned in the cache (`latest-*.version` marker), so
   later runs are offline and deterministic; delete the marker to move.
