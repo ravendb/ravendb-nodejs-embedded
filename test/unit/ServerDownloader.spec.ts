@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ServerDownloader } from "../../src/ServerDownloader";
+import { ServerDownloader, downloadProgressLogger } from "../../src/ServerDownloader";
 import { ServerOptions } from "../../src/ServerOptions";
 import { EmbeddedServerError } from "../../src/Errors";
 import { noopLogger } from "../../src/Logger";
@@ -129,6 +130,49 @@ describe("ServerDownloader.downloadServer", () => {
         stderrSpy.mockRestore();
     });
 
+    it("reclaims a lock left behind by a dead process instead of waiting", async () => {
+        vi.spyOn(ServerDownloader, "downloadArchive")
+            .mockImplementation(async (_url, destinationFile) => {
+                fs.writeFileSync(destinationFile, "fake-archive");
+            });
+        vi.spyOn(ServerDownloader, "extractArchive")
+            .mockImplementation(async (_archive, targetDir) => installFakeServer(targetDir));
+
+        // simulate a Ctrl+C mid-download: the lock dir (with its owner file) survives
+        const lockDir = path.join(cacheDir, `9.9.7-${currentPlatform.platform}.lock`);
+        fs.mkdirSync(lockDir);
+        const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+        fs.writeFileSync(path.join(lockDir, "owner"), `${deadPid} 2026-01-01T00:00:00.000Z`);
+
+        const result = await ServerDownloader.downloadServer(
+            { version: "9.9.7", cacheDirectory: cacheDir, logger: noopLogger });
+        expect(fs.existsSync(path.join(result, "Server", "Raven.Server.dll"))).toBe(true);
+    });
+
+    it("logs that it is waiting while a live process holds the lock", async () => {
+        vi.spyOn(ServerDownloader, "downloadArchive")
+            .mockImplementation(async (_url, destinationFile) => {
+                fs.writeFileSync(destinationFile, "fake-archive");
+            });
+        vi.spyOn(ServerDownloader, "extractArchive")
+            .mockImplementation(async (_archive, targetDir) => installFakeServer(targetDir));
+
+        // this test process itself plays the live lock owner
+        const lockDir = path.join(cacheDir, `9.9.6-${currentPlatform.platform}.lock`);
+        fs.mkdirSync(lockDir);
+        fs.writeFileSync(path.join(lockDir, "owner"), `${process.pid} ${new Date().toISOString()}`);
+        const messages: string[] = [];
+        const logger = { debug: () => {}, info: (m: string) => messages.push(m), warn: () => {} };
+
+        const pending = ServerDownloader.downloadServer(
+            { version: "9.9.6", cacheDirectory: cacheDir, logger });
+        await vi.waitFor(() =>
+            expect(messages.some(m => /waiting/i.test(m) && m.includes(lockDir))).toBe(true));
+
+        fs.rmSync(lockDir, { recursive: true, force: true }); // owner "finishes"
+        await pending;
+    });
+
     it("honors RAVENDB_EMBEDDED_SERVER_VERSION", async () => {
         vi.stubEnv("RAVENDB_EMBEDDED_SERVER_VERSION", "8.8.8");
         const installDir = path.join(cacheDir, `8.8.8-${currentPlatform.platform}`);
@@ -216,6 +260,62 @@ describe("ServerDownloader.downloadArchive", () => {
         expect(messages.at(-1)).toBe("Downloaded 0 MB of 0 MB (100%)");
     });
 
+    it("draws an in-place progress bar for the default logger on a TTY", async () => {
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                for (let i = 0; i < 4; i++) {
+                    controller.enqueue(new TextEncoder().encode("x".repeat(25)));
+                }
+                controller.close();
+            }
+        });
+        vi.stubGlobal("fetch", vi.fn(async () =>
+            new Response(stream, { headers: { "content-length": "100" } })));
+        const originalIsTty = process.stderr.isTTY;
+        process.stderr.isTTY = true;
+        const writes: string[] = [];
+        const stderrSpy = vi.spyOn(process.stderr, "write")
+            .mockImplementation((chunk: unknown) => {
+                writes.push(String(chunk));
+                return true;
+            });
+
+        try {
+            await ServerDownloader.downloadArchive(
+                "https://example.com/a.zip", path.join(tempDir, "archive.zip"), downloadProgressLogger);
+        } finally {
+            stderrSpy.mockRestore();
+            process.stderr.isTTY = originalIsTty;
+        }
+
+        const barWrites = writes.filter(w => w.startsWith("\r["));
+        expect(barWrites.length).toBeGreaterThanOrEqual(1);
+        expect(barWrites.at(-1)).toBe(`\r[${"█".repeat(30)}] 100% (0 MB of 0 MB)`);
+        expect(writes.at(-1)).toBe("\n");
+    });
+
+    it("logs discrete lines for the default logger when stderr is not a TTY", async () => {
+        stubFetch("exactly-16-bytes", { "content-length": "16" });
+        const originalIsTty = process.stderr.isTTY;
+        process.stderr.isTTY = false;
+        const writes: string[] = [];
+        const stderrSpy = vi.spyOn(process.stderr, "write")
+            .mockImplementation((chunk: unknown) => {
+                writes.push(String(chunk));
+                return true;
+            });
+
+        try {
+            await ServerDownloader.downloadArchive(
+                "https://example.com/a.zip", path.join(tempDir, "archive.zip"), downloadProgressLogger);
+        } finally {
+            stderrSpy.mockRestore();
+            process.stderr.isTTY = originalIsTty;
+        }
+
+        expect(writes).toEqual(["Downloaded 0 MB of 0 MB (100%)\n"]);
+    });
+
     it("stays silent without a logger", async () => {
         stubFetch("exactly-16-bytes", { "content-length": "16" });
         const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -235,6 +335,7 @@ describe("ServerDownloader.clearCache", () => {
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         fs.rmSync(cacheDir, { recursive: true, force: true });
     });
 
@@ -283,6 +384,35 @@ describe("ServerDownloader.clearCache", () => {
         expect(removed.sort()).toEqual([dropped, droppedMarker].sort());
         expect(fs.existsSync(kept)).toBe(true);
         expect(fs.existsSync(keptMarker)).toBe(true);
+    });
+
+    it("keeps sweeping past locked entries and reports them with a running-server hint", () => {
+        // On Windows fs.rmSync fails with EPERM when a file inside the install dir is
+        // held open (typically by a Raven.Server process still running from the cache).
+        const locked = makeInstall("7.2.4-windows-x64");
+        const other = makeInstall("7.2.5-linux-x64");
+        vi.spyOn(ServerDownloader, "removeCacheEntry").mockImplementation(target => {
+            if (target === locked) {
+                const error = new Error(
+                    `EPERM, Permission denied: \\\\?\\${locked}`) as NodeJS.ErrnoException;
+                error.code = "EPERM";
+                throw error;
+            }
+            fs.rmSync(target, { recursive: true, force: true });
+        });
+
+        let thrown: unknown;
+        try {
+            ServerDownloader.clearCache({ cacheDirectory: cacheDir });
+        } catch (error) {
+            thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(EmbeddedServerError);
+        expect((thrown as Error).message).toContain(locked);
+        expect((thrown as Error).message).toMatch(/still running/i);
+        // the locked entry stays, but everything else was still removed
+        expect(fs.existsSync(locked)).toBe(true);
+        expect(fs.existsSync(other)).toBe(false);
     });
 
     it("still removes transient artifacts of kept versions", () => {

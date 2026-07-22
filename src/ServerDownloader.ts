@@ -229,6 +229,11 @@ export class ServerDownloader {
      * downloads, temp extract dirs) and `latest-*` version markers whose pinned
      * version is being removed. Unknown entries are left untouched.
      *
+     * Entries that cannot be removed (on Windows typically EPERM, because a
+     * Raven.Server process is still running from the cache) do not stop the
+     * sweep — the rest is removed and an EmbeddedServerError listing the
+     * locked entries is thrown at the end.
+     *
      * @returns absolute paths of the removed entries
      */
     public static clearCache(options: { cacheDirectory?: string; keepVersions?: string[] } = {}): string[] {
@@ -240,9 +245,15 @@ export class ServerDownloader {
         const keep = new Set((options.keepVersions ?? []).map(v => v.trim()).filter(Boolean));
         const platforms = Object.keys(LATEST_PRODUCT_NAMES);
         const removed: string[] = [];
+        const failed: string[] = [];
         const remove = (fullPath: string) => {
-            fs.rmSync(fullPath, { recursive: true, force: true });
-            removed.push(fullPath);
+            try {
+                this.removeCacheEntry(fullPath);
+                removed.push(fullPath);
+            } catch (error: unknown) {
+                const code = (error as NodeJS.ErrnoException)?.code;
+                failed.push(code ? `${fullPath} (${code})` : fullPath);
+            }
         };
 
         for (const entry of fs.readdirSync(cacheRoot)) {
@@ -275,7 +286,22 @@ export class ServerDownloader {
             }
         }
 
+        if (failed.length > 0) {
+            throw new EmbeddedServerError(
+                `Could not remove ${failed.length === 1 ? "a cache entry" : `${failed.length} cache entries`} ` +
+                "because its files are in use. If a RavenDB server is still running from the cache " +
+                "(or an antivirus scan is holding the files), stop it and run --clear-cache again:\n" +
+                failed.map(entry => `  ${entry}`).join("\n"));
+        }
+
         return removed;
+    }
+
+    /** @internal exposed as a public static only so tests can simulate locked files. */
+    public static removeCacheEntry(fullPath: string): void {
+        // maxRetries smooths over short-lived locks (antivirus scans, Windows search
+        // indexer); a running Raven.Server still fails and is reported by clearCache.
+        fs.rmSync(fullPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
     }
 
     /** @internal exposed as a public static only so tests can stub the network. */
