@@ -59,16 +59,11 @@ async function main() {
         return;
     }
 
-    const logger = {
-        debug: message => console.log(message),
-        info: message => console.log(message),
-        warn: (message, error) => console.warn(message, error ?? "")
-    };
-
+    // No logger override: the default stderr logger draws an in-place progress
+    // bar on a TTY, same as the auto-download path in EmbeddedServer.start().
     const installDir = await ServerDownloader.downloadServer({
         version,
-        cacheDirectory: dir,
-        logger
+        cacheDirectory: dir
     });
     console.log(`RavenDB server is ready in: ${installDir}`);
 }
