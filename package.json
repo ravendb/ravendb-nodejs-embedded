@@ -1,6 +1,6 @@
 {
   "name": "ravendb-embedded",
-  "version": "0.1.0",
+  "version": "7.2.5",
   "description": "RavenDB embedded server for Node.js — runs a local RavenDB server as a child process",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

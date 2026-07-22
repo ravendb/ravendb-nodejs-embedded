@@ -214,11 +214,14 @@ download progress.
   Windows, `$XDG_CACHE_HOME/ravendb-embedded/{version}-{platform}` (default
   `~/.cache/ravendb-embedded/...`) elsewhere. Override with
   `serverOptions.downloadCacheDirectory` or `RAVENDB_EMBEDDED_CACHE_DIR`.
-- **Version:** `serverOptions.serverVersion` (default `"latest"`) or
-  `RAVENDB_EMBEDDED_SERVER_VERSION`. `"latest"` resolves the current stable
-  release once and then stays pinned in the cache, so later runs are offline
-  and deterministic — pin a concrete version (e.g. `"7.2.4"`) or delete the
-  `latest-*.version` marker in the cache to move.
+- **Version:** `serverOptions.serverVersion` or
+  `RAVENDB_EMBEDDED_SERVER_VERSION`. The default is pinned to the server
+  release this package version was built and tested against (exported as
+  `DEFAULT_SERVER_VERSION`; the package version tracks it, same as the
+  Python and Java embedded packages), so builds are deterministic. Set
+  `"latest"` to opt into the current stable release instead — it resolves
+  once and then stays pinned in the cache (`latest-*.version` marker), so
+  later runs are offline and deterministic; delete the marker to move.
 - **Opt out:** set `serverOptions.downloadServer = false` or
   `RAVENDB_EMBEDDED_SKIP_DOWNLOAD=1`.
 - **Manual installation always wins:** extract the distribution from

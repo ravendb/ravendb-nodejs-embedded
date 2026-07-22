@@ -4,6 +4,13 @@ import { X509Certificate } from "node:crypto";
 import { EmbeddedServerError } from "./Errors";
 import type { Logger } from "./Logger";
 
+/**
+ * The RavenDB server version downloaded by default. Follows the Python/Java
+ * embedded packages: the package version, this constant, and the tested client
+ * version move together — bump all of them on every release.
+ */
+export const DEFAULT_SERVER_VERSION = "7.2.5";
+
 export class LicensingOptions {
     public license?: string;
     public licensePath?: string;
@@ -57,9 +64,10 @@ export class ServerOptions {
     public serverDirectory = path.join(process.cwd(), "RavenDBServer");
     // Auto-download (no C# counterpart — the NuGet package ships the binaries as contentFiles;
     // here they are fetched on demand, Puppeteer-style, and cached per version+platform).
-    // "latest" resolves the current stable once, then stays pinned in the cache marker so
-    // later runs are offline and deterministic; pin serverVersion to move to another release.
-    public serverVersion = "latest";
+    // Pinned by default (like the Python/Java embedded packages) so builds are
+    // deterministic; set "latest" to opt into resolving the current stable release
+    // (sticky — it stays pinned in the cache marker until the marker is deleted).
+    public serverVersion = DEFAULT_SERVER_VERSION;
     public downloadServer = true;
     public downloadCacheDirectory?: string;
     public dotNetPath = "dotnet";

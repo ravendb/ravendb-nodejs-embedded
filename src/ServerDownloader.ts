@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { EmbeddedServerError, ServerDownloadError } from "./Errors";
 import { noopLogger } from "./Logger";
 import type { Logger } from "./Logger";
+import { DEFAULT_SERVER_VERSION } from "./ServerOptions";
 import type { ServerOptions } from "./ServerOptions";
 
 const CACHE_DIR_NAME = "ravendb-embedded";
@@ -18,7 +19,8 @@ const PROGRESS_STEP_BYTES = 50 * 1024 * 1024; // progress cadence when the total
 // The distribution is ~350 MB, so a first run with the default (silent) logger would
 // otherwise hang for minutes with no output at all. Download progress therefore goes
 // to stderr unless the caller injects a logger — pass noopLogger to silence it.
-const downloadProgressLogger: Logger = {
+/** @internal exported only so tests can exercise the default progress output. */
+export const downloadProgressLogger: Logger = {
     debug: () => {},
     info: message => process.stderr.write(`${message}\n`),
     warn: (message, error) => process.stderr.write(`${message}${error ? ` ${String(error)}` : ""}\n`)
@@ -26,6 +28,71 @@ const downloadProgressLogger: Logger = {
 
 function formatMegabytes(bytes: number): string {
     return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+interface ProgressReporter {
+    report(receivedBytes: number): void;
+    finish(): void;
+}
+
+// An in-place progress bar is only drawn for the default stderr logger on a TTY;
+// custom loggers and non-interactive outputs (CI logs, pipes) get discrete
+// log lines instead, so their output stays append-only.
+function createProgressReporter(log: Logger, expectedBytes: number): ProgressReporter {
+    if (log === downloadProgressLogger && process.stderr.isTTY) {
+        const barWidth = 30;
+        let lastRendered = -1;
+        let dirty = false;
+        return {
+            report: receivedBytes => {
+                // redraw at most once per percent (or per MB when the total is unknown)
+                const step = expectedBytes > 0
+                    ? Math.floor((receivedBytes / expectedBytes) * 100)
+                    : Math.floor(receivedBytes / (1024 * 1024));
+                if (step === lastRendered) {
+                    return;
+                }
+                lastRendered = step;
+                dirty = true;
+                let line: string;
+                if (expectedBytes > 0) {
+                    const percent = Math.min(100, step);
+                    const filled = Math.floor((percent / 100) * barWidth);
+                    const bar = "█".repeat(filled) + "▒".repeat(barWidth - filled);
+                    line = `[${bar}] ${percent}% (${formatMegabytes(receivedBytes)} of ${formatMegabytes(expectedBytes)})`;
+                } else {
+                    line = `Downloaded ${formatMegabytes(receivedBytes)}`;
+                }
+                process.stderr.write(`\r${line}`);
+            },
+            finish: () => {
+                if (dirty) {
+                    process.stderr.write("\n");
+                    dirty = false;
+                }
+            }
+        };
+    }
+
+    // report every 10% when the total is known, every PROGRESS_STEP_BYTES otherwise
+    let lastReportedDecile = 0;
+    let nextReportBytes = PROGRESS_STEP_BYTES;
+    return {
+        report: receivedBytes => {
+            if (expectedBytes > 0) {
+                const decile = Math.floor((receivedBytes / expectedBytes) * 10);
+                if (decile > lastReportedDecile) {
+                    lastReportedDecile = decile;
+                    const percent = Math.floor((receivedBytes / expectedBytes) * 100);
+                    log.info(`Downloaded ${formatMegabytes(receivedBytes)} of ${formatMegabytes(expectedBytes)} (${percent}%)`);
+                }
+            } else if (receivedBytes >= nextReportBytes) {
+                nextReportBytes += PROGRESS_STEP_BYTES;
+                log.info(`Downloaded ${formatMegabytes(receivedBytes)}`);
+            }
+        },
+        finish: () => {}
+    };
 }
 
 // Product names used by the hibernatingrhinos.com "latest" redirect endpoint,
@@ -44,7 +111,11 @@ export interface ServerPlatform {
 }
 
 export interface DownloadServerOptions {
-    /** RavenDB version to download, e.g. "7.2.4", or "latest" (default). */
+    /**
+     * RavenDB version to download, e.g. "7.2.4", or "latest". Defaults to
+     * {@link DEFAULT_SERVER_VERSION} — the release this package version was
+     * built and tested against.
+     */
     version?: string;
     /** Overrides the default per-user cache root. */
     cacheDirectory?: string;
@@ -133,7 +204,7 @@ export class ServerDownloader {
 
         let version = options.version?.trim()
             || process.env["RAVENDB_EMBEDDED_SERVER_VERSION"]?.trim()
-            || "latest";
+            || DEFAULT_SERVER_VERSION;
         let downloadUrl = this.buildDownloadUrl(version, serverPlatform);
 
         if (version === "latest") {
@@ -147,7 +218,7 @@ export class ServerDownloader {
             return installDir;
         }
 
-        await this._withLock(installDir, async () => {
+        await this._withLock(installDir, log, async () => {
             if (this.hasServerBinaries(installDir)) {
                 return; // another process finished the download while we waited for the lock
             }
@@ -325,9 +396,7 @@ export class ServerDownloader {
         const contentEncoding = response.headers.get("content-encoding");
         const expectedBytes = contentEncoding ? 0 : Number(response.headers.get("content-length") ?? 0);
         let receivedBytes = 0;
-        // report every 10% when the total is known, every PROGRESS_STEP_BYTES otherwise
-        let lastReportedDecile = 0;
-        let nextReportBytes = PROGRESS_STEP_BYTES;
+        const progress = createProgressReporter(log, expectedBytes);
 
         try {
             await pipeline(
@@ -335,17 +404,7 @@ export class ServerDownloader {
                 async function* (source: AsyncIterable<Buffer>) {
                     for await (const chunk of source) {
                         receivedBytes += chunk.length;
-                        if (expectedBytes > 0) {
-                            const decile = Math.floor((receivedBytes / expectedBytes) * 10);
-                            if (decile > lastReportedDecile) {
-                                lastReportedDecile = decile;
-                                const percent = Math.floor((receivedBytes / expectedBytes) * 100);
-                                log.info(`Downloaded ${formatMegabytes(receivedBytes)} of ${formatMegabytes(expectedBytes)} (${percent}%)`);
-                            }
-                        } else if (receivedBytes >= nextReportBytes) {
-                            nextReportBytes += PROGRESS_STEP_BYTES;
-                            log.info(`Downloaded ${formatMegabytes(receivedBytes)}`);
-                        }
+                        progress.report(receivedBytes);
                         yield chunk;
                     }
                 },
@@ -354,6 +413,8 @@ export class ServerDownloader {
             fs.rmSync(destinationFile, { force: true });
             throw new ServerDownloadError(
                 `Failed to save the RavenDB server archive: ${(error as Error)?.message ?? error}`, url, error);
+        } finally {
+            progress.finish();
         }
 
         if (expectedBytes > 0 && receivedBytes !== expectedBytes) {
@@ -473,7 +534,7 @@ export class ServerDownloader {
     ): void {
         const requested = options.version?.trim()
             || process.env["RAVENDB_EMBEDDED_SERVER_VERSION"]?.trim()
-            || "latest";
+            || DEFAULT_SERVER_VERSION;
         if (requested === "latest") {
             fs.writeFileSync(this._latestMarkerPath(cacheRoot, serverPlatform), version);
         }
@@ -511,9 +572,10 @@ export class ServerDownloader {
 
     // mkdir-based cross-process lock so parallel processes (e.g. vitest workers)
     // never download the same distribution twice.
-    private static async _withLock(installDir: string, action: () => Promise<void>): Promise<void> {
+    private static async _withLock(installDir: string, log: Logger, action: () => Promise<void>): Promise<void> {
         const lockDir = `${installDir}.lock`;
         const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+        let waitingLogged = false;
 
         for (;;) {
             try {
@@ -524,17 +586,21 @@ export class ServerDownloader {
                     throw error;
                 }
                 try {
-                    const age = Date.now() - fs.statSync(lockDir).mtimeMs;
-                    if (age > LOCK_STALE_MS) {
+                    if (this._isLockAbandoned(lockDir)) {
+                        log.info(`Removing a download lock left behind by a process that is no longer running (lock: ${lockDir})`);
                         fs.rmSync(lockDir, { recursive: true, force: true });
                         continue;
                     }
                 } catch {
-                    continue; // lock released between the mkdir attempt and the stat
+                    continue; // lock released between the mkdir attempt and the inspection
                 }
                 if (Date.now() > deadline) {
                     throw new ServerDownloadError(
                         `Timed out waiting for another process to finish downloading the RavenDB server (lock: ${lockDir})`);
+                }
+                if (!waitingLogged) {
+                    waitingLogged = true;
+                    log.info(`Waiting for another process to finish downloading the RavenDB server (lock: ${lockDir})...`);
                 }
                 await new Promise(r => setTimeout(r, LOCK_POLL_MS));
             }
@@ -545,6 +611,33 @@ export class ServerDownloader {
             await action();
         } finally {
             fs.rmSync(lockDir, { recursive: true, force: true });
+        }
+    }
+
+    // A lock whose owner process is dead (e.g. a download interrupted by Ctrl+C)
+    // is reclaimed immediately; the mtime-based staleness check remains as a
+    // fallback for the tiny window before the owner file is written and for
+    // PID-reuse false positives.
+    private static _isLockAbandoned(lockDir: string): boolean {
+        let ownerPid = 0;
+        try {
+            ownerPid = Number.parseInt(fs.readFileSync(path.join(lockDir, "owner"), "utf8"), 10);
+        } catch {
+            // owner file not written yet — fall through to the age check
+        }
+        if (ownerPid > 0 && !this._isProcessAlive(ownerPid)) {
+            return true;
+        }
+        return Date.now() - fs.statSync(lockDir).mtimeMs > LOCK_STALE_MS;
+    }
+
+    private static _isProcessAlive(pid: number): boolean {
+        try {
+            process.kill(pid, 0); // signal 0: existence probe only
+            return true;
+        } catch (error: unknown) {
+            // EPERM means the process exists but belongs to another user
+            return (error as NodeJS.ErrnoException)?.code === "EPERM";
         }
     }
 }

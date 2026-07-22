@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ServerOptions } from "../../src/ServerOptions";
+import { ServerOptions, DEFAULT_SERVER_VERSION } from "../../src/ServerOptions";
 
 // self-signed throwaway certificate (CN=ravendb-embedded-test, 2026-2036), no key material
 const TEST_PEM_CERT = `-----BEGIN CERTIFICATE-----
@@ -44,6 +44,13 @@ describe("ServerOptions defaults", () => {
         expect(options.licensing.disableLicenseSupportCheck).toBe(true);
         expect(options.licensing.eulaAccepted).toBe(false);
     });
+
+    it("pins the default server version to the package version (Python/Java embedded convention)", () => {
+        const packageJson = JSON.parse(
+            fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"));
+        expect(new ServerOptions().serverVersion).toBe(DEFAULT_SERVER_VERSION);
+        expect(packageJson.version).toBe(DEFAULT_SERVER_VERSION);
+    });
 });
 
 describe("ServerOptions constructor init object", () => {
@@ -57,7 +64,7 @@ describe("ServerOptions constructor init object", () => {
         expect(options.dotNetPath).toBe("/usr/local/bin/dotnet");
         expect(options.logsPath).toBe("/var/log/ravendb");
         // untouched fields keep their defaults
-        expect(options.serverVersion).toBe("latest");
+        expect(options.serverVersion).toBe(DEFAULT_SERVER_VERSION);
         expect(options.dataDirectory).toBe(path.join(process.cwd(), "RavenDB"));
         expect(options.gracefulShutdownTimeout).toBe(30_000);
     });

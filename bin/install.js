@@ -8,10 +8,12 @@
 //   npx ravendb-embedded-install --clear-cache [--keep 7.2.5] [--dir /path/to/cache]
 
 const { ServerDownloader } = require("../dist/ServerDownloader");
+const { DEFAULT_SERVER_VERSION } = require("../dist/ServerOptions");
 
 const USAGE =
     "Usage: ravendb-embedded-install [--version <x.y.z>|latest] [--dir <cache directory>]\n" +
-    "       ravendb-embedded-install --clear-cache [--keep <x.y.z>]... [--dir <cache directory>]";
+    "       ravendb-embedded-install --clear-cache [--keep <x.y.z>]... [--dir <cache directory>]\n" +
+    `Default version: ${DEFAULT_SERVER_VERSION} (the release this package was tested against)`;
 
 function parseArgs(argv) {
     const parsed = { version: undefined, dir: undefined, clearCache: false, keep: [] };
