@@ -576,6 +576,7 @@ export class ServerDownloader {
         const lockDir = `${installDir}.lock`;
         const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
         let waitingLogged = false;
+        let reclaimLogged = false;
 
         for (;;) {
             try {
@@ -585,14 +586,25 @@ export class ServerDownloader {
                 if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
                     throw error;
                 }
+                let abandoned = false;
                 try {
-                    if (this._isLockAbandoned(lockDir)) {
-                        log.info(`Removing a download lock left behind by a process that is no longer running (lock: ${lockDir})`);
-                        fs.rmSync(lockDir, { recursive: true, force: true });
-                        continue;
-                    }
+                    abandoned = this._isLockAbandoned(lockDir);
                 } catch {
                     continue; // lock released between the mkdir attempt and the inspection
+                }
+                if (abandoned) {
+                    if (!reclaimLogged) {
+                        reclaimLogged = true;
+                        log.info(`Removing a download lock left behind by a process that is no longer running (lock: ${lockDir})`);
+                    }
+                    try {
+                        fs.rmSync(lockDir, { recursive: true, force: true });
+                        continue;
+                    } catch {
+                        // removal can fail transiently (e.g. EPERM on Windows while another
+                        // process touches the dir) — fall through to the deadline check and
+                        // poll instead of spinning
+                    }
                 }
                 if (Date.now() > deadline) {
                     throw new ServerDownloadError(

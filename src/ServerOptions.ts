@@ -7,7 +7,8 @@ import type { Logger } from "./Logger";
 /**
  * The RavenDB server version downloaded by default. The package version, this
  * constant, and the tested client version move together — bump all of them on
- * every release.
+ * every release. Package-only fixes keep this constant and publish with a
+ * prerelease/build suffix (e.g. 7.2.5-1) instead of retargeting the server.
  */
 export const DEFAULT_SERVER_VERSION = "7.2.5";
 

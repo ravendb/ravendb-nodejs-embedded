@@ -164,6 +164,13 @@ export class EmbeddedServer extends EventEmitter {
         const clone: ServerOptions = Object.assign(Object.create(Object.getPrototypeOf(source)), source);
         clone.commandLineArgs = [...source.commandLineArgs];
         clone.licensing = Object.assign(Object.create(Object.getPrototypeOf(source.licensing)), source.licensing);
+        if (source.security) {
+            clone.security = {
+                ...source.security,
+                clientCertificate: Buffer.from(source.security.clientCertificate),
+                ca: source.security.ca ? Buffer.from(source.security.ca) : undefined
+            };
+        }
         return clone;
     }
 
@@ -327,11 +334,12 @@ export class EmbeddedServer extends EventEmitter {
             await this._killServerProcess(serverProcess);
             throw signal.reason ?? new Error("The operation was aborted");
         }
+        // The signal governs only the in-flight startup — once the server is up
+        // (or startup failed), a later abort must not touch the running process.
         const onAbort = () => {
             this._killServerProcess(serverProcess).catch(() => {});
         };
         signal?.addEventListener("abort", onAbort, { once: true });
-        serverProcess.once("exit", () => signal?.removeEventListener("abort", onAbort));
 
         // Best-effort cleanup when the host process exits. The real safety net is the
         // server-side --Embedded.ParentProcessId watchdog.
@@ -351,6 +359,8 @@ export class EmbeddedServer extends EventEmitter {
         } catch (error) {
             await this._shutdownServerProcess(serverProcess).catch(() => {});
             throw error;
+        } finally {
+            signal?.removeEventListener("abort", onAbort);
         }
     }
 

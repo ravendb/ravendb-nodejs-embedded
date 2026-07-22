@@ -141,6 +141,29 @@ describe("options snapshot", () => {
         }
     });
 
+    it("snapshots security so caller-side edits do not leak into the running server", () => {
+        const options = new ServerOptions();
+        options.security = {
+            clientCertificate: Buffer.from("cert"),
+            clientCertificateType: "pem",
+            clientCertificateThumbprint: "thumb",
+            serverCertificateThumbprint: "server-thumb",
+            certificatePassword: "secret",
+            ca: Buffer.from("ca")
+        };
+        const clone = (EmbeddedServer as unknown as {
+            _cloneOptions(source: ServerOptions): ServerOptions;
+        })._cloneOptions(options);
+
+        options.security.certificatePassword = "changed";
+        options.security.clientCertificate.write("XXXX");
+        options.security.ca!.write("YY");
+
+        expect(clone.security!.certificatePassword).toBe("secret");
+        expect(clone.security!.clientCertificate.toString()).toBe("cert");
+        expect(clone.security!.ca!.toString()).toBe("ca");
+    });
+
     it("ignores caller-side edits made after startServer", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-snap-"));
         const server = new EmbeddedServer();
@@ -185,6 +208,25 @@ describe("startServer abort", () => {
             controller.abort();
             await expect(startPromise).rejects.toThrow(/aborted/i);
             await exited; // the spawned process must not be left behind
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("aborting after a successful startup leaves the running server untouched", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-abort-"));
+        const server = new EmbeddedServer();
+        const controller = new AbortController();
+        let exited = false;
+        server.once("serverProcessExited", () => { exited = true; });
+        try {
+            await server.startServer(makeFakeServer(tempDir), controller.signal);
+            // e.g. AbortSignal.timeout(...) firing long after the server is up
+            controller.abort();
+            await new Promise(resolve => setTimeout(resolve, 300));
+            expect(exited).toBe(false);
+            expect(await server.getServerUri()).toBe("http://127.0.0.1:9999");
         } finally {
             await server.dispose();
             fs.rmSync(tempDir, { recursive: true, force: true });

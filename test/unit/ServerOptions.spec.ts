@@ -49,7 +49,10 @@ describe("ServerOptions defaults", () => {
         const packageJson = JSON.parse(
             fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"));
         expect(new ServerOptions().serverVersion).toBe(DEFAULT_SERVER_VERSION);
-        expect(packageJson.version).toBe(DEFAULT_SERVER_VERSION);
+        // package-only fixes may append a prerelease/build suffix (e.g. 7.2.5-1)
+        // without retargeting the server release
+        expect(packageJson.version === DEFAULT_SERVER_VERSION
+            || packageJson.version.startsWith(`${DEFAULT_SERVER_VERSION}-`)).toBe(true);
     });
 });
 
