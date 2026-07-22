@@ -157,6 +157,41 @@ describe("options snapshot", () => {
     });
 });
 
+describe("startServer abort", () => {
+    it("rejects immediately on an already-aborted signal", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-abort-"));
+        const server = new EmbeddedServer();
+        try {
+            await expect(server.startServer(makeFakeServer(tempDir), AbortSignal.abort()))
+                .rejects.toThrow(/aborted/i);
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("aborts a hanging startup and tears the process down", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-abort-"));
+        const options = makeFakeServer(tempDir);
+        // a server that never prints the URL marker
+        fs.writeFileSync(path.join(options.serverDirectory, "Raven.Server.dll"),
+            "setInterval(() => {}, 1000);");
+        const server = new EmbeddedServer();
+        const controller = new AbortController();
+        try {
+            const startPromise = server.startServer(options, controller.signal);
+            startPromise.catch(() => {});
+            const exited = new Promise<void>(resolve => server.once("serverProcessExited", resolve));
+            controller.abort();
+            await expect(startPromise).rejects.toThrow(/aborted/i);
+            await exited; // the spawned process must not be left behind
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("signal handlers", () => {
     it("does not register handlers by default", async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-sig-"));

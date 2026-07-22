@@ -131,7 +131,7 @@ export class EmbeddedServer extends EventEmitter {
         return this._serverOptions?.logger ?? noopLogger;
     }
 
-    public async startServer(options?: ServerOptions): Promise<void> {
+    public async startServer(options?: ServerOptions, signal?: AbortSignal): Promise<void> {
         if (this._serverTask) {
             throw new EmbeddedServerError("The server was already started");
         }
@@ -145,11 +145,19 @@ export class EmbeddedServer extends EventEmitter {
             this._installSignalHandlers();
         }
 
-        const task = this._runServer(this._serverOptions);
+        const task = this._runServer(this._serverOptions, signal);
         task.catch(() => {}); // error still surfaces via the awaits below / on first use
         this._serverTask = task;
 
-        await task;
+        try {
+            await withAbort(task, signal);
+        } catch (error) {
+            if (signal?.aborted) {
+                // the spawned process may still be booting — tear it down
+                this.dispose().catch(() => {});
+            }
+            throw error;
+        }
     }
 
     private static _cloneOptions(source: ServerOptions): ServerOptions {
@@ -302,7 +310,7 @@ export class EmbeddedServer extends EventEmitter {
         process.removeListener("beforeExit", this._handleBeforeExit);
     }
 
-    private async _runServer(options: ServerOptions): Promise<ServerHandle> {
+    private async _runServer(options: ServerOptions, signal?: AbortSignal): Promise<ServerHandle> {
         const serverProcess = await RavenServerRunner.run(options);
 
         this._log.debug(`Starting global server: ${serverProcess.pid ?? "<no PID>"}`);
@@ -312,6 +320,18 @@ export class EmbeddedServer extends EventEmitter {
         });
 
         serverProcess.on("exit", () => this.emit("serverProcessExited"));
+
+        // an aborted startup must not leave the spawned process behind, and it must die
+        // right away — not after the full startup timeout has elapsed
+        if (signal?.aborted) {
+            await this._killServerProcess(serverProcess);
+            throw signal.reason ?? new Error("The operation was aborted");
+        }
+        const onAbort = () => {
+            this._killServerProcess(serverProcess).catch(() => {});
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        serverProcess.once("exit", () => signal?.removeEventListener("abort", onAbort));
 
         // Best-effort cleanup when the host process exits. The real safety net is the
         // server-side --Embedded.ParentProcessId watchdog.
