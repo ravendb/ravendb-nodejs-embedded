@@ -16,8 +16,11 @@ npm install ravendb-embedded ravendb
 No further setup is required: on the first `startServer()` call the package
 downloads the RavenDB server binaries for your platform automatically
 (Puppeteer-style) and caches them per version, as long as
-`licensing.eulaAccepted = true` is set. Subsequent starts reuse the cache and
-make no network calls.
+`licensing.eulaAccepted = true` is set. Download progress is printed to stderr
+so the first run never looks like a hang — inject a `logger` to redirect or
+silence it. Subsequent starts reuse the cache and make no network calls.
+See [Server download details](#server-download-details) for cache location,
+version pinning, opt-out and manual installation.
 
 Check the runtime [prerequisites](https://ravendb.net/docs/article-page/server/embedded#prerequisite) in our docs. In short:
 
@@ -25,56 +28,6 @@ Check the runtime [prerequisites](https://ravendb.net/docs/article-page/server/e
   runtime matching `serverOptions.frameworkVersion` must be installed.
 - Extraction uses the system `tar` (ships with Windows 10+, Linux and macOS);
   without it, install the server manually (see below).
-
-### Server download details
-
-- **Cache location:** `%LOCALAPPDATA%\ravendb-embedded\{version}-{platform}` on
-  Windows, `$XDG_CACHE_HOME/ravendb-embedded/{version}-{platform}` (default
-  `~/.cache/ravendb-embedded/...`) elsewhere. Override with
-  `serverOptions.downloadCacheDirectory` or `RAVENDB_EMBEDDED_CACHE_DIR`.
-- **Version:** `serverOptions.serverVersion` (default `"latest"`) or
-  `RAVENDB_EMBEDDED_SERVER_VERSION`. `"latest"` resolves the current stable
-  release once and then stays pinned in the cache, so later runs are offline
-  and deterministic — pin a concrete version (e.g. `"7.2.4"`) or delete the
-  `latest-*.version` marker in the cache to move.
-- **Opt out:** set `serverOptions.downloadServer = false` or
-  `RAVENDB_EMBEDDED_SKIP_DOWNLOAD=1`.
-- **Manual installation always wins:** extract the distribution from
-  https://ravendb.net/download into `./RavenDBServer` (or any directory passed
-  via `serverOptions.serverDirectory`) — the zip can be extracted as-is, its
-  nested `Server/` subdirectory is detected automatically. When binaries are
-  present, the network is never touched. A custom `serverDirectory` is treated
-  as user-managed and is never downloaded into.
-- **Pre-warm the cache** (Docker images, CI):
-
-  ```bash
-  npx ravendb-embedded-install [--version 7.2.4] [--dir /path/to/cache]
-  ```
-
-- **Integrity:** downloads run over HTTPS and are verified against the
-  response `Content-Length` (truncated downloads are rejected). RavenDB does
-  not publish a checksum manifest for its distributions yet, so a stronger
-  check is not possible.
-- **Clear the cache** (old versions accumulate, one distribution per
-  version+platform):
-
-  ```bash
-  npx ravendb-embedded-install --clear-cache [--keep 7.2.5] [--dir /path/to/cache]
-  ```
-
-  or from code: `ServerDownloader.clearCache({ keepVersions: ["7.2.5"] })`.
-
-## Learning resources
-- **Embedded Server Guide** - https://ravendb.net/articles/building-a-beer-vending-machine-program-with-ravendb-embedded-server 🛣️
-- **Documentation** - https://ravendb.net/docs/article-page/server/embedded 🎒
-- Code Samples - https://demo.ravendb.net/ 🧑‍💻
-
-## Community
-- **RavenDB's Discord** - https://discord.gg/ravendb 🍻
-- Articles & guides - https://ravendb.net/articles 📰
-- YouTube - https://www.youtube.com/@ravendb_net 🍿
-- Blog - https://ayende.com/blog/ 🧑‍💻
-
 
 ## Getting started
 
@@ -98,12 +51,31 @@ await embeddedServer.dispose();
 `embeddedServer` is a shared singleton (like `EmbeddedServer.Instance` in C#).
 Instantiate `new EmbeddedServer()` for isolated servers (e.g. tests).
 
+Runnable samples live in [`examples/`](examples).
+
+> **EULA semantics:** `licensing.eulaAccepted` gates the automatic binaries
+> download and is forwarded to the server as `--License.Eula.Accepted` (same
+> as C#) — enforcement of the flag itself is up to the server. A manual
+> install in `serverDirectory` is run as-is.
+
+> **Options are snapshotted:** `startServer()` takes a copy of the
+> `ServerOptions` object. The caller's object is never mutated (the resolved
+> download directory and server URL stay internal — use `getServerUri()`), and
+> editing it after the call has no effect on the running server.
+
 > **Start semantics vs C#:** `startServer()` awaits the full server startup, so
 > configuration errors surface immediately at the call site. The C#
 > `StartServer()` is fire-and-forget — the server boots in the background and
 > the first `GetDocumentStore()` call does the waiting. Code ported 1:1 from C#
 > will therefore see slightly different timing (errors earlier, first store
 > faster), never different results.
+
+`startServer()` also accepts an `AbortSignal` to cancel a startup in flight —
+the spawned process is torn down immediately:
+
+```ts
+await embeddedServer.startServer(options, AbortSignal.timeout(30_000));
+```
 
 ### Graceful shutdown on process exit
 
@@ -136,7 +108,7 @@ class Product {
     public unitsInStock?: number;
 }
 
-const session = store.openSession();               // Open a session for a default 'Database'
+const session = store.openSession();               // Open a session on the 'Embedded' database
 
 const category = new Category();
 category.name = "Database Category";
@@ -158,7 +130,7 @@ await session.saveChanges();                       // Send to the Server
 
 ### Query
 ```ts
-const session = store.openSession();               // Open a session for a default 'Database'
+const session = store.openSession();               // Open a session on the 'Embedded' database
 
 const productNames = await session
     .query<Product>({ collection: "Products" })    // Query for Products
@@ -217,7 +189,10 @@ for a self-signed server certificate, its own PEM *is* the CA — pass it as
 for C# API parity and the PFX fallback described above.
 
 ### Logging
-Silent by default. Inject any logger implementing `debug`/`info`/`warn`:
+Silent by default, with one exception: automatic server download progress goes
+to stderr, so a ~350 MB first-run download never looks like a hang. Inject any
+logger implementing `debug`/`info`/`warn` to redirect everything — or
+`noopLogger` for full silence:
 
 ```ts
 import type { Logger } from "ravendb-embedded";
@@ -230,7 +205,57 @@ options.logger = {
 ```
 
 Log points mirror the C# package: server start (PID), graceful shutdown,
-kill fallback, document store creation, database-already-exists.
+kill fallback, document store creation, database-already-exists — plus
+download progress.
+
+## Server download details
+
+- **Cache location:** `%LOCALAPPDATA%\ravendb-embedded\{version}-{platform}` on
+  Windows, `$XDG_CACHE_HOME/ravendb-embedded/{version}-{platform}` (default
+  `~/.cache/ravendb-embedded/...`) elsewhere. Override with
+  `serverOptions.downloadCacheDirectory` or `RAVENDB_EMBEDDED_CACHE_DIR`.
+- **Version:** `serverOptions.serverVersion` (default `"latest"`) or
+  `RAVENDB_EMBEDDED_SERVER_VERSION`. `"latest"` resolves the current stable
+  release once and then stays pinned in the cache, so later runs are offline
+  and deterministic — pin a concrete version (e.g. `"7.2.4"`) or delete the
+  `latest-*.version` marker in the cache to move.
+- **Opt out:** set `serverOptions.downloadServer = false` or
+  `RAVENDB_EMBEDDED_SKIP_DOWNLOAD=1`.
+- **Manual installation always wins:** extract the distribution from
+  https://ravendb.net/download into `./RavenDBServer` (or any directory passed
+  via `serverOptions.serverDirectory`) — the zip can be extracted as-is, its
+  nested `Server/` subdirectory is detected automatically. When binaries are
+  present, the network is never touched. A custom `serverDirectory` is treated
+  as user-managed and is never downloaded into.
+- **Pre-warm the cache** (Docker images, CI):
+
+  ```bash
+  npx ravendb-embedded-install [--version 7.2.4] [--dir /path/to/cache]
+  ```
+
+- **Integrity:** downloads run over HTTPS and are verified against the
+  response `Content-Length` (truncated downloads are rejected). RavenDB does
+  not publish a checksum manifest for its distributions yet, so a stronger
+  check is not possible.
+- **Clear the cache** (old versions accumulate, one distribution per
+  version+platform):
+
+  ```bash
+  npx ravendb-embedded-install --clear-cache [--keep 7.2.5] [--dir /path/to/cache]
+  ```
+
+  or from code: `ServerDownloader.clearCache({ keepVersions: ["7.2.5"] })`.
+
+## Learning resources
+- **Embedded Server Guide** - https://ravendb.net/articles/building-a-beer-vending-machine-program-with-ravendb-embedded-server 🛣️
+- **Documentation** - https://ravendb.net/docs/article-page/server/embedded 🎒
+- Code Samples - https://demo.ravendb.net/ 🧑‍💻
+
+## Community
+- **RavenDB's Discord** - https://discord.gg/ravendb 🍻
+- Articles & guides - https://ravendb.net/articles 📰
+- YouTube - https://www.youtube.com/@ravendb_net 🍿
+- Blog - https://ayende.com/blog/ 🧑‍💻
 
 ## Tests
 - `npm run test:unit` — no server needed

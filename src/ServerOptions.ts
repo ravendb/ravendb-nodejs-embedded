@@ -7,6 +7,12 @@ import type { Logger } from "./Logger";
 export class LicensingOptions {
     public license?: string;
     public licensePath?: string;
+    /**
+     * Forwarded to the server as --License.Eula.Accepted (same as C#) — enforcement
+     * of that flag is the server's business. Additionally, this package refuses to
+     * auto-download the server binaries until the EULA is accepted; a manual install
+     * in serverDirectory is run as-is.
+     */
     public eulaAccepted = false;
     public disableAutoUpdate = false;
     public disableAutoUpdateFromApi = false;
