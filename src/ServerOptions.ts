@@ -72,6 +72,11 @@ export class ServerOptions {
     public installSignalHandlers = false;
     public licensing = new LicensingOptions();
     public security?: SecurityOptions;
+    /**
+     * Silent by default, with one exception: automatic server download progress is
+     * printed to stderr when no logger is set (a ~350 MB download must not look
+     * like a hang) — inject a logger (e.g. noopLogger) to redirect or silence it.
+     */
     public logger?: Logger;
 
     public constructor(init?: ServerOptionsInit) {

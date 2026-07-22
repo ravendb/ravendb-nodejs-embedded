@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { ServerDownloader } from "../../src/ServerDownloader";
 import { ServerOptions } from "../../src/ServerOptions";
 import { EmbeddedServerError } from "../../src/Errors";
+import { noopLogger } from "../../src/Logger";
 
 const currentPlatform = ServerDownloader.resolvePlatform();
 
@@ -102,14 +103,30 @@ describe("ServerDownloader.downloadServer", () => {
             .mockImplementation(async (_archive, targetDir) => installFakeServer(targetDir));
 
         const [first, second] = await Promise.all([
-            ServerDownloader.downloadServer({ version: "9.9.9", cacheDirectory: cacheDir }),
-            ServerDownloader.downloadServer({ version: "9.9.9", cacheDirectory: cacheDir })
+            ServerDownloader.downloadServer({ version: "9.9.9", cacheDirectory: cacheDir, logger: noopLogger }),
+            ServerDownloader.downloadServer({ version: "9.9.9", cacheDirectory: cacheDir, logger: noopLogger })
         ]);
 
         expect(first).toBe(second);
         expect(downloadSpy).toHaveBeenCalledTimes(1);
         expect(extractSpy).toHaveBeenCalledTimes(1);
         expect(fs.existsSync(path.join(first, "Server", "Raven.Server.dll"))).toBe(true);
+    });
+
+    it("prints download status to stderr when no logger is provided", async () => {
+        vi.spyOn(ServerDownloader, "downloadArchive")
+            .mockImplementation(async (_url, destinationFile) => {
+                fs.writeFileSync(destinationFile, "fake-archive");
+            });
+        vi.spyOn(ServerDownloader, "extractArchive")
+            .mockImplementation(async (_archive, targetDir) => installFakeServer(targetDir));
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+        await ServerDownloader.downloadServer({ version: "9.9.8", cacheDirectory: cacheDir });
+
+        expect(stderrSpy.mock.calls.some(([line]) =>
+            String(line).startsWith("Downloading RavenDB server 9.9.8"))).toBe(true);
+        stderrSpy.mockRestore();
     });
 
     it("honors RAVENDB_EMBEDDED_SERVER_VERSION", async () => {
@@ -169,6 +186,44 @@ describe("ServerDownloader.downloadArchive", () => {
 
         await ServerDownloader.downloadArchive("https://example.com/a.zip", destination);
         expect(fs.existsSync(destination)).toBe(true);
+    });
+
+    it("reports progress through the logger as deciles of Content-Length", async () => {
+        // 4 chunks of 25 bytes against a 100-byte total: 25%, 50%, 75%, 100%
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                for (let i = 0; i < 4; i++) {
+                    controller.enqueue(new TextEncoder().encode("x".repeat(25)));
+                }
+                controller.close();
+            }
+        });
+        vi.stubGlobal("fetch", vi.fn(async () =>
+            new Response(stream, { headers: { "content-length": "100" } })));
+        const messages: string[] = [];
+        const logger = { debug: () => {}, info: (m: string) => messages.push(m), warn: () => {} };
+
+        await ServerDownloader.downloadArchive(
+            "https://example.com/a.zip", path.join(tempDir, "archive.zip"), logger);
+
+        // the stream layer may coalesce chunks, so the exact step count is not
+        // deterministic — but progress must be reported and end at 100%
+        expect(messages.length).toBeGreaterThanOrEqual(1);
+        expect(messages.length).toBeLessThanOrEqual(4);
+        for (const message of messages) {
+            expect(message).toMatch(/^Downloaded 0 MB of 0 MB \(\d+%\)$/);
+        }
+        expect(messages.at(-1)).toBe("Downloaded 0 MB of 0 MB (100%)");
+    });
+
+    it("stays silent without a logger", async () => {
+        stubFetch("exactly-16-bytes", { "content-length": "16" });
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+        await ServerDownloader.downloadArchive("https://example.com/a.zip", path.join(tempDir, "archive.zip"));
+
+        expect(stderrSpy).not.toHaveBeenCalled();
+        stderrSpy.mockRestore();
     });
 });
 

@@ -13,6 +13,20 @@ const CACHE_DIR_NAME = "ravendb-embedded";
 const LOCK_STALE_MS = 10 * 60 * 1000;
 const LOCK_POLL_MS = 500;
 const LOCK_WAIT_TIMEOUT_MS = 15 * 60 * 1000;
+const PROGRESS_STEP_BYTES = 50 * 1024 * 1024; // progress cadence when the total size is unknown
+
+// The distribution is ~350 MB, so a first run with the default (silent) logger would
+// otherwise hang for minutes with no output at all. Download progress therefore goes
+// to stderr unless the caller injects a logger — pass noopLogger to silence it.
+const downloadProgressLogger: Logger = {
+    debug: () => {},
+    info: message => process.stderr.write(`${message}\n`),
+    warn: (message, error) => process.stderr.write(`${message}${error ? ` ${String(error)}` : ""}\n`)
+};
+
+function formatMegabytes(bytes: number): string {
+    return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
 
 // Product names used by the hibernatingrhinos.com "latest" redirect endpoint,
 // verified against the live endpoints (each 307-redirects to the daily-builds S3 bucket).
@@ -34,6 +48,11 @@ export interface DownloadServerOptions {
     version?: string;
     /** Overrides the default per-user cache root. */
     cacheDirectory?: string;
+    /**
+     * Receives download progress and status messages. When omitted, they are
+     * printed to stderr (a ~350 MB download must not look like a hang) —
+     * pass {@link noopLogger} for full silence.
+     */
     logger?: Logger;
 }
 
@@ -107,7 +126,7 @@ export class ServerDownloader {
      * platform and returns the directory to use as ServerOptions.serverDirectory.
      */
     public static async downloadServer(options: DownloadServerOptions = {}): Promise<string> {
-        const log = options.logger ?? noopLogger;
+        const log = options.logger ?? downloadProgressLogger;
         const serverPlatform = this.resolvePlatform();
         const cacheRoot = this.getCacheRoot(options.cacheDirectory);
         fs.mkdirSync(cacheRoot, { recursive: true });
@@ -137,12 +156,14 @@ export class ServerDownloader {
             const extractDir = `${installDir}.tmp-${process.pid}`;
             try {
                 log.info(`Downloading RavenDB server ${version} (${serverPlatform.platform}) from ${downloadUrl} to ${installDir}`);
-                await this.downloadArchive(downloadUrl, archiveFile);
+                await this.downloadArchive(downloadUrl, archiveFile, log);
                 fs.rmSync(extractDir, { recursive: true, force: true });
                 fs.mkdirSync(extractDir, { recursive: true });
+                log.info("Extracting the RavenDB server archive...");
                 await this.extractArchive(archiveFile, extractDir, serverPlatform.ext);
                 this._makeExecutable(extractDir);
                 fs.renameSync(extractDir, installDir);
+                log.info(`RavenDB server ${version} is ready in ${installDir}`);
             } catch (error: unknown) {
                 if (error instanceof ServerDownloadError) {
                     throw error;
@@ -258,7 +279,8 @@ export class ServerDownloader {
     }
 
     /** @internal exposed as a public static only so tests can stub the network. */
-    public static async downloadArchive(url: string, destinationFile: string): Promise<void> {
+    public static async downloadArchive(url: string, destinationFile: string, logger?: Logger): Promise<void> {
+        const log = logger ?? noopLogger;
         let response: Response;
         try {
             response = await fetch(url, { redirect: "follow" });
@@ -277,6 +299,9 @@ export class ServerDownloader {
         const contentEncoding = response.headers.get("content-encoding");
         const expectedBytes = contentEncoding ? 0 : Number(response.headers.get("content-length") ?? 0);
         let receivedBytes = 0;
+        // report every 10% when the total is known, every PROGRESS_STEP_BYTES otherwise
+        let lastReportedDecile = 0;
+        let nextReportBytes = PROGRESS_STEP_BYTES;
 
         try {
             await pipeline(
@@ -284,6 +309,17 @@ export class ServerDownloader {
                 async function* (source: AsyncIterable<Buffer>) {
                     for await (const chunk of source) {
                         receivedBytes += chunk.length;
+                        if (expectedBytes > 0) {
+                            const decile = Math.floor((receivedBytes / expectedBytes) * 10);
+                            if (decile > lastReportedDecile) {
+                                lastReportedDecile = decile;
+                                const percent = Math.floor((receivedBytes / expectedBytes) * 100);
+                                log.info(`Downloaded ${formatMegabytes(receivedBytes)} of ${formatMegabytes(expectedBytes)} (${percent}%)`);
+                            }
+                        } else if (receivedBytes >= nextReportBytes) {
+                            nextReportBytes += PROGRESS_STEP_BYTES;
+                            log.info(`Downloaded ${formatMegabytes(receivedBytes)}`);
+                        }
                         yield chunk;
                     }
                 },
