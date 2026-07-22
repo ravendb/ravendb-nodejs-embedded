@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 "use strict";
 
-// Pre-warms the RavenDB server download cache (for Docker images / CI).
-// Thin wrapper over ServerDownloader — all logic lives there.
+// Pre-warms the RavenDB server download cache (for Docker images / CI) and
+// clears old versions from it. Thin wrapper over ServerDownloader — all logic
+// lives there.
 //   npx ravendb-embedded-install [--version 7.2.5] [--dir /path/to/cache]
+//   npx ravendb-embedded-install --clear-cache [--keep 7.2.5] [--dir /path/to/cache]
 
 const { ServerDownloader } = require("../dist/ServerDownloader");
 
+const USAGE =
+    "Usage: ravendb-embedded-install [--version <x.y.z>|latest] [--dir <cache directory>]\n" +
+    "       ravendb-embedded-install --clear-cache [--keep <x.y.z>]... [--dir <cache directory>]";
+
 function parseArgs(argv) {
-    const parsed = { version: undefined, dir: undefined };
+    const parsed = { version: undefined, dir: undefined, clearCache: false, keep: [] };
     for (let i = 0; i < argv.length; i++) {
         switch (argv[i]) {
             case "--version":
@@ -17,9 +23,15 @@ function parseArgs(argv) {
             case "--dir":
                 parsed.dir = argv[++i];
                 break;
+            case "--clear-cache":
+                parsed.clearCache = true;
+                break;
+            case "--keep":
+                parsed.keep.push(argv[++i]);
+                break;
             case "--help":
             case "-h":
-                console.log("Usage: ravendb-embedded-install [--version <x.y.z>|latest] [--dir <cache directory>]");
+                console.log(USAGE);
                 process.exit(0);
                 break;
             default:
@@ -31,7 +43,20 @@ function parseArgs(argv) {
 }
 
 async function main() {
-    const { version, dir } = parseArgs(process.argv.slice(2));
+    const { version, dir, clearCache, keep } = parseArgs(process.argv.slice(2));
+
+    if (clearCache) {
+        const removed = ServerDownloader.clearCache({ cacheDirectory: dir, keepVersions: keep });
+        if (removed.length === 0) {
+            console.log("Cache is already empty — nothing to remove.");
+        } else {
+            for (const entry of removed) {
+                console.log(`Removed: ${entry}`);
+            }
+        }
+        return;
+    }
+
     const logger = {
         debug: message => console.log(message),
         info: message => console.log(message),

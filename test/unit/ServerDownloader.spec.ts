@@ -122,6 +122,126 @@ describe("ServerDownloader.downloadServer", () => {
     });
 });
 
+describe("ServerDownloader.downloadArchive", () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-archive-"));
+    });
+
+    afterEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        vi.unstubAllGlobals();
+    });
+
+    function stubFetch(body: string, headers: Record<string, string>): void {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { headers })));
+    }
+
+    it("throws and deletes the partial file when the download is truncated", async () => {
+        stubFetch("only-14-bytes!", { "content-length": "999" });
+        const destination = path.join(tempDir, "archive.zip");
+
+        await expect(ServerDownloader.downloadArchive("https://example.com/a.zip", destination))
+            .rejects.toThrow(/truncated: received 14 of 999 bytes/);
+        expect(fs.existsSync(destination)).toBe(false);
+    });
+
+    it("accepts a download matching Content-Length", async () => {
+        stubFetch("exactly-16-bytes", { "content-length": "16" });
+        const destination = path.join(tempDir, "archive.zip");
+
+        await ServerDownloader.downloadArchive("https://example.com/a.zip", destination);
+        expect(fs.readFileSync(destination, "utf8")).toBe("exactly-16-bytes");
+    });
+
+    it("skips the size check when the body was decompressed (content-encoding present)", async () => {
+        stubFetch("decompressed-body", { "content-length": "5", "content-encoding": "gzip" });
+        const destination = path.join(tempDir, "archive.zip");
+
+        await ServerDownloader.downloadArchive("https://example.com/a.zip", destination);
+        expect(fs.existsSync(destination)).toBe(true);
+    });
+
+    it("skips the size check when Content-Length is absent", async () => {
+        stubFetch("whatever-length", {});
+        const destination = path.join(tempDir, "archive.zip");
+
+        await ServerDownloader.downloadArchive("https://example.com/a.zip", destination);
+        expect(fs.existsSync(destination)).toBe(true);
+    });
+});
+
+describe("ServerDownloader.clearCache", () => {
+    let cacheDir: string;
+
+    beforeEach(() => {
+        cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-clear-"));
+    });
+
+    afterEach(() => {
+        fs.rmSync(cacheDir, { recursive: true, force: true });
+    });
+
+    function makeInstall(name: string): string {
+        const dir = path.join(cacheDir, name);
+        fs.mkdirSync(path.join(dir, "Server"), { recursive: true });
+        fs.writeFileSync(path.join(dir, "Server", "Raven.Server.dll"), "");
+        return dir;
+    }
+
+    it("returns an empty list for a missing cache directory", () => {
+        expect(ServerDownloader.clearCache({ cacheDirectory: path.join(cacheDir, "nope") }))
+            .toEqual([]);
+    });
+
+    it("removes install dirs, transient artifacts and markers", () => {
+        const install = makeInstall("7.2.4-linux-x64");
+        const lock = path.join(cacheDir, "7.2.4-linux-x64.lock");
+        fs.mkdirSync(lock);
+        const partial = path.join(cacheDir, "7.2.5-windows-x64.download-123.zip");
+        fs.writeFileSync(partial, "partial");
+        const tmp = path.join(cacheDir, "7.2.5-windows-x64.tmp-123");
+        fs.mkdirSync(tmp);
+        const marker = path.join(cacheDir, "latest-linux-x64.version");
+        fs.writeFileSync(marker, "7.2.4");
+        const foreign = path.join(cacheDir, "unrelated.txt");
+        fs.writeFileSync(foreign, "keep me");
+
+        const removed = ServerDownloader.clearCache({ cacheDirectory: cacheDir });
+
+        expect(removed.sort()).toEqual([install, lock, partial, tmp, marker].sort());
+        expect(fs.existsSync(foreign)).toBe(true);
+        expect(fs.existsSync(install)).toBe(false);
+    });
+
+    it("keeps versions listed in keepVersions along with their markers", () => {
+        const kept = makeInstall("7.2.5-linux-x64");
+        const dropped = makeInstall("7.2.4-linux-x64");
+        const keptMarker = path.join(cacheDir, "latest-linux-x64.version");
+        fs.writeFileSync(keptMarker, "7.2.5");
+        const droppedMarker = path.join(cacheDir, "latest-windows-x64.version");
+        fs.writeFileSync(droppedMarker, "7.2.4");
+
+        const removed = ServerDownloader.clearCache({ cacheDirectory: cacheDir, keepVersions: ["7.2.5"] });
+
+        expect(removed.sort()).toEqual([dropped, droppedMarker].sort());
+        expect(fs.existsSync(kept)).toBe(true);
+        expect(fs.existsSync(keptMarker)).toBe(true);
+    });
+
+    it("still removes transient artifacts of kept versions", () => {
+        const kept = makeInstall("7.2.5-linux-x64");
+        const staleLock = path.join(cacheDir, "7.2.5-linux-x64.lock");
+        fs.mkdirSync(staleLock);
+
+        const removed = ServerDownloader.clearCache({ cacheDirectory: cacheDir, keepVersions: ["7.2.5"] });
+
+        expect(removed).toEqual([staleLock]);
+        expect(fs.existsSync(kept)).toBe(true);
+    });
+});
+
 describe("ServerDownloader.ensureServerBinaries", () => {
     let tempDir: string;
 

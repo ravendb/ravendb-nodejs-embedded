@@ -202,6 +202,61 @@ export class ServerDownloader {
         });
     }
 
+    /**
+     * Removes downloaded server distributions from the cache (Puppeteer-style
+     * `browsers clear`). Also sweeps transient artifacts (stale locks, partial
+     * downloads, temp extract dirs) and `latest-*` version markers whose pinned
+     * version is being removed. Unknown entries are left untouched.
+     *
+     * @returns absolute paths of the removed entries
+     */
+    public static clearCache(options: { cacheDirectory?: string; keepVersions?: string[] } = {}): string[] {
+        const cacheRoot = this.getCacheRoot(options.cacheDirectory);
+        if (!fs.existsSync(cacheRoot)) {
+            return [];
+        }
+
+        const keep = new Set((options.keepVersions ?? []).map(v => v.trim()).filter(Boolean));
+        const platforms = Object.keys(LATEST_PRODUCT_NAMES);
+        const removed: string[] = [];
+        const remove = (fullPath: string) => {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+            removed.push(fullPath);
+        };
+
+        for (const entry of fs.readdirSync(cacheRoot)) {
+            const fullPath = path.join(cacheRoot, entry);
+
+            const marker = /^latest-(.+)\.version$/.exec(entry);
+            if (marker && platforms.includes(marker[1])) {
+                let pinned = "";
+                try {
+                    pinned = fs.readFileSync(fullPath, "utf8").trim();
+                } catch {
+                    // unreadable marker — treat as stale
+                }
+                if (!keep.has(pinned)) {
+                    remove(fullPath);
+                }
+                continue;
+            }
+
+            // install dirs and their transient artifacts: <version>-<platform>[.lock|.tmp-*|.download-*]
+            const install = platforms
+                .map(platform => new RegExp(`^(.+)-${platform}(\\.lock|\\.tmp-.+|\\.download-.+)?$`).exec(entry))
+                .find(match => match !== null);
+            if (!install) {
+                continue;
+            }
+            const [, version, transientSuffix] = install;
+            if (transientSuffix || !keep.has(version)) {
+                remove(fullPath);
+            }
+        }
+
+        return removed;
+    }
+
     /** @internal exposed as a public static only so tests can stub the network. */
     public static async downloadArchive(url: string, destinationFile: string): Promise<void> {
         let response: Response;
@@ -215,14 +270,35 @@ export class ServerDownloader {
             throw new ServerDownloadError(
                 `Failed to download the RavenDB server: HTTP ${response.status} ${response.statusText}`, url);
         }
+
+        // RavenDB publishes no checksum manifest, so a size check against Content-Length
+        // (skipped when fetch already decompressed the body) is the strongest available
+        // guard against truncated downloads.
+        const contentEncoding = response.headers.get("content-encoding");
+        const expectedBytes = contentEncoding ? 0 : Number(response.headers.get("content-length") ?? 0);
+        let receivedBytes = 0;
+
         try {
             await pipeline(
                 Readable.fromWeb(response.body as import("node:stream/web").ReadableStream),
+                async function* (source: AsyncIterable<Buffer>) {
+                    for await (const chunk of source) {
+                        receivedBytes += chunk.length;
+                        yield chunk;
+                    }
+                },
                 fs.createWriteStream(destinationFile));
         } catch (error: unknown) {
             fs.rmSync(destinationFile, { force: true });
             throw new ServerDownloadError(
                 `Failed to save the RavenDB server archive: ${(error as Error)?.message ?? error}`, url, error);
+        }
+
+        if (expectedBytes > 0 && receivedBytes !== expectedBytes) {
+            fs.rmSync(destinationFile, { force: true });
+            throw new ServerDownloadError(
+                `The RavenDB server download is truncated: received ${receivedBytes} of ${expectedBytes} bytes`,
+                url);
         }
     }
 
