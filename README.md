@@ -51,8 +51,18 @@ Check the runtime [prerequisites](https://ravendb.net/docs/article-page/server/e
   npx ravendb-embedded-install [--version 7.2.4] [--dir /path/to/cache]
   ```
 
-- TODO: checksum verification — RavenDB does not publish a checksum manifest
-  for its distributions yet.
+- **Integrity:** downloads run over HTTPS and are verified against the
+  response `Content-Length` (truncated downloads are rejected). RavenDB does
+  not publish a checksum manifest for its distributions yet, so a stronger
+  check is not possible.
+- **Clear the cache** (old versions accumulate, one distribution per
+  version+platform):
+
+  ```bash
+  npx ravendb-embedded-install --clear-cache [--keep 7.2.5] [--dir /path/to/cache]
+  ```
+
+  or from code: `ServerDownloader.clearCache({ keepVersions: ["7.2.5"] })`.
 
 ## Learning resources
 - **Embedded Server Guide** - https://ravendb.net/articles/building-a-beer-vending-machine-program-with-ravendb-embedded-server 🛣️
@@ -86,6 +96,30 @@ await embeddedServer.dispose();
 
 `embeddedServer` is a shared singleton (like `EmbeddedServer.Instance` in C#).
 Instantiate `new EmbeddedServer()` for isolated servers (e.g. tests).
+
+> **Start semantics vs C#:** `startServer()` awaits the full server startup, so
+> configuration errors surface immediately at the call site. The C#
+> `StartServer()` is fire-and-forget — the server boots in the background and
+> the first `GetDocumentStore()` call does the waiting. Code ported 1:1 from C#
+> will therefore see slightly different timing (errors earlier, first store
+> faster), never different results.
+
+### Graceful shutdown on process exit
+
+The server watches its parent process (`--Embedded.ParentProcessId`) and exits
+when it dies — that safety net is always on. For a *graceful* shutdown when the
+host receives `SIGINT`/`SIGTERM` (Ctrl-C, `kill`, container stop), opt in:
+
+```ts
+options.installSignalHandlers = true;
+```
+
+On a signal the server is disposed first; the signal is then re-raised only
+when your app has no handler of its own, so the process still exits with the
+conventional exit code — apps with their own handlers keep full control.
+`beforeExit` also disposes the server. This is opt-in (unlike the JVM shutdown
+hook and Python `atexit` equivalents, which auto-register) because it changes
+process-global signal behavior.
 
 ### Store documents
 ```ts
@@ -146,6 +180,40 @@ options.secured("/path/to/cert.pfx", "password", "<thumbprint>", "/path/to/cert.
 The certificate must carry `keyUsage=digitalSignature` and
 `extendedKeyUsage=serverAuth` (RavenDB validates both); add `clientAuth` when
 the same certificate is used as the client certificate.
+
+#### Certificate from a vault/HSM (external program)
+
+When the server certificate lives in a vault or HSM instead of a file, let the
+server obtain it by running an external program
+(`--Security.Certificate.Load.Exec`, mirrors the C#
+`Secured(certLoadExec, ...)` overload):
+
+```ts
+options.securedWithExec(
+    "vault-cli",                       // program the server runs
+    "get --cert ravendb-server",       // its arguments (raw string)
+    "<server cert thumbprint>",        // required — the cert is loaded by the server
+    "/path/to/client-cert.pem",        // client certificate for document stores
+    undefined,                         // client certificate password, if any
+    "/path/to/ca.pem"                  // CA bundle the client should trust
+);
+```
+
+The client certificate's thumbprint is registered as the server admin
+certificate. For a PEM client certificate it is computed automatically; for
+PFX the `serverCertThumbprint` value is used as a fallback (correct when the
+same certificate secures the server and authenticates the client).
+
+#### Server certificate trust (no thumbprint pinning)
+
+The C# package pins the server certificate by thumbprint via a global
+`RemoteCertificateValidationCallback`. The `ravendb` Node client exposes no
+certificate-validation hook (its auth options are only
+`type`/`certificate`/`password`/`ca`), so thumbprint pinning is **not
+available** in this package. Trust the server through the `ca` option instead:
+for a self-signed server certificate, its own PEM *is* the CA — pass it as
+`caCertificatePath` (shown above). The `serverCertThumbprint` parameters exist
+for C# API parity and the PFX fallback described above.
 
 ### Logging
 Silent by default. Inject any logger implementing `debug`/`info`/`warn`:
