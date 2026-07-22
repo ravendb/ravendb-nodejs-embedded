@@ -52,6 +52,14 @@ export class ServerOptions {
     public processKillTimeout = 5_000;
     public maxServerStartupTimeDuration = 60_000;
     public commandLineArgs: string[] = [];
+    /**
+     * Opt-in: register SIGINT/SIGTERM/beforeExit handlers that gracefully shut the
+     * server down before the host process dies (the Node counterpart of the JVM
+     * shutdown hook / Python atexit — those are safe to auto-register, changing
+     * global signal behavior in Node is not). The server-side
+     * --Embedded.ParentProcessId watchdog remains the safety net either way.
+     */
+    public installSignalHandlers = false;
     public licensing = new LicensingOptions();
     public security?: SecurityOptions;
     public logger?: Logger;

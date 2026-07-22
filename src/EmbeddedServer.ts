@@ -104,6 +104,28 @@ export class EmbeddedServer extends EventEmitter {
     private _serverTask: Promise<ServerHandle> | null = null;
     private _serverOptions: ServerOptions | null = null;
     private readonly _documentStores = new Map<string, Promise<IDocumentStore>>();
+    private _signalHandlersInstalled = false;
+
+    private readonly _handleSignal = (signal: NodeJS.Signals): void => {
+        this._log.debug(`Received ${signal} — shutting down the embedded server.`);
+        this.dispose()
+            .catch(() => {})
+            .finally(() => {
+                // dispose() removed this handler; re-deliver the signal only when the
+                // app has no handler of its own, so the process still exits with the
+                // conventional signal exit code. Apps with their own handlers keep
+                // full control over when (and whether) the process dies.
+                if (process.listenerCount(signal) === 0) {
+                    process.kill(process.pid, signal);
+                }
+            });
+    };
+
+    private readonly _handleBeforeExit = (): void => {
+        // beforeExit may run async work — the event loop stays alive until dispose()
+        // finishes. dispose() also unregisters this handler, so no beforeExit loop.
+        this.dispose().catch(() => {});
+    };
 
     private get _log(): Logger {
         return this._serverOptions?.logger ?? noopLogger;
@@ -115,6 +137,10 @@ export class EmbeddedServer extends EventEmitter {
         }
 
         this._serverOptions = options ?? new ServerOptions();
+
+        if (this._serverOptions.installSignalHandlers) {
+            this._installSignalHandlers();
+        }
 
         const task = this._runServer(this._serverOptions);
         task.catch(() => {}); // error still surfaces via the awaits below / on first use
@@ -217,6 +243,8 @@ export class EmbeddedServer extends EventEmitter {
     }
 
     public async dispose(): Promise<void> {
+        this._uninstallSignalHandlers();
+
         const task = this._serverTask;
         this._serverTask = null;
         if (!task) {
@@ -242,6 +270,26 @@ export class EmbeddedServer extends EventEmitter {
 
     public [Symbol.asyncDispose](): Promise<void> {
         return this.dispose();
+    }
+
+    private _installSignalHandlers(): void {
+        if (this._signalHandlersInstalled) {
+            return;
+        }
+        this._signalHandlersInstalled = true;
+        process.on("SIGINT", this._handleSignal);
+        process.on("SIGTERM", this._handleSignal);
+        process.on("beforeExit", this._handleBeforeExit);
+    }
+
+    private _uninstallSignalHandlers(): void {
+        if (!this._signalHandlersInstalled) {
+            return;
+        }
+        this._signalHandlersInstalled = false;
+        process.removeListener("SIGINT", this._handleSignal);
+        process.removeListener("SIGTERM", this._handleSignal);
+        process.removeListener("beforeExit", this._handleBeforeExit);
     }
 
     private async _runServer(options: ServerOptions): Promise<ServerHandle> {

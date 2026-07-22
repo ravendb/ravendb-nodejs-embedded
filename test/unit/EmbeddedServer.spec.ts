@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -104,6 +104,96 @@ describe("shutdown", () => {
         child.stdin!.end();
         await new Promise(resolve => setTimeout(resolve, 100)); // let any async error surface
         expect(true).toBe(true);
+    });
+});
+
+describe("signal handlers", () => {
+    function makeFakeServer(tempDir: string): ServerOptions {
+        const fakeServerDir = path.join(tempDir, "server");
+        fs.mkdirSync(fakeServerDir, { recursive: true });
+        fs.writeFileSync(path.join(fakeServerDir, "Raven.Server.dll"),
+            "console.log('Server available on: http://127.0.0.1:9999');" +
+            "process.stdin.on('data', d => { if (String(d).includes('shutdown')) process.exit(0); });" +
+            "setInterval(() => {}, 1000);");
+        const options = new ServerOptions();
+        options.serverDirectory = fakeServerDir;
+        options.dataDirectory = path.join(tempDir, "data");
+        options.logsPath = path.join(tempDir, "logs");
+        options.dotNetPath = process.execPath;
+        options.frameworkVersion = null;
+        return options;
+    }
+
+    it("does not register handlers by default", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-sig-"));
+        const before = process.listeners("SIGINT").length;
+        const server = new EmbeddedServer();
+        try {
+            await server.startServer(makeFakeServer(tempDir));
+            expect(process.listeners("SIGINT").length).toBe(before);
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("registers SIGINT/SIGTERM/beforeExit handlers when opted in and removes them on dispose", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-sig-"));
+        const counts = () => ({
+            sigint: process.listeners("SIGINT").length,
+            sigterm: process.listeners("SIGTERM").length,
+            beforeExit: process.listeners("beforeExit").length
+        });
+        const before = counts();
+        const server = new EmbeddedServer();
+        const options = makeFakeServer(tempDir);
+        options.installSignalHandlers = true;
+        try {
+            await server.startServer(options);
+            expect(counts()).toEqual({
+                sigint: before.sigint + 1,
+                sigterm: before.sigterm + 1,
+                beforeExit: before.beforeExit + 1
+            });
+        } finally {
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+        expect(counts()).toEqual(before);
+    });
+
+    it("a delivered signal disposes the server and skips the re-raise when the app has its own handler", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-sig-"));
+        const before = process.listeners("SIGINT");
+        const server = new EmbeddedServer();
+        const options = makeFakeServer(tempDir);
+        options.installSignalHandlers = true;
+        const appHandler = () => {}; // its presence must suppress the re-raise
+        process.on("SIGINT", appHandler);
+        // mocked so an unexpected re-raise cannot kill the test worker
+        const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+        try {
+            await server.startServer(options);
+            const added = process.listeners("SIGINT")
+                .filter(l => !before.includes(l) && l !== appHandler);
+            expect(added).toHaveLength(1);
+
+            const exited = new Promise<void>(resolve => server.once("serverProcessExited", resolve));
+            (added[0] as (signal: string) => void)("SIGINT");
+
+            await expect.poll(() => process.listeners("SIGINT").includes(added[0])).toBe(false);
+            // dispose() ran: server task cleared
+            await expect(server.getServerUri()).rejects.toThrow(/run startServer\(\) before/);
+
+            await exited;
+            await new Promise(resolve => setTimeout(resolve, 200)); // let the dispose chain settle
+            expect(killSpy.mock.calls.filter(([, signal]) => signal === "SIGINT")).toHaveLength(0);
+        } finally {
+            killSpy.mockRestore();
+            process.removeListener("SIGINT", appHandler);
+            await server.dispose();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 });
 
