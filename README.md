@@ -82,8 +82,9 @@ Check the runtime [prerequisites](https://ravendb.net/docs/article-page/server/e
 ```ts
 import { embeddedServer, ServerOptions } from "ravendb-embedded";
 
-const options = new ServerOptions();
-options.licensing.eulaAccepted = true;
+const options = new ServerOptions({
+    licensing: { eulaAccepted: true }
+});
 
 await embeddedServer.startServer(options);
 

@@ -46,6 +46,49 @@ describe("ServerOptions defaults", () => {
     });
 });
 
+describe("ServerOptions constructor init object", () => {
+    it("applies provided fields and keeps defaults for the rest", () => {
+        const options = new ServerOptions({
+            downloadServer: false,
+            dotNetPath: "/usr/local/bin/dotnet",
+            logsPath: "/var/log/ravendb"
+        });
+        expect(options.downloadServer).toBe(false);
+        expect(options.dotNetPath).toBe("/usr/local/bin/dotnet");
+        expect(options.logsPath).toBe("/var/log/ravendb");
+        // untouched fields keep their defaults
+        expect(options.serverVersion).toBe("latest");
+        expect(options.dataDirectory).toBe(path.join(process.cwd(), "RavenDB"));
+        expect(options.gracefulShutdownTimeout).toBe(30_000);
+    });
+
+    it("merges licensing as a partial into LicensingOptions", () => {
+        const options = new ServerOptions({ licensing: { eulaAccepted: true, license: "{}" } });
+        expect(options.licensing.eulaAccepted).toBe(true);
+        expect(options.licensing.license).toBe("{}");
+        // untouched licensing defaults survive
+        expect(options.licensing.disableLicenseSupportCheck).toBe(true);
+        expect(options.licensing.disableAutoUpdate).toBe(false);
+    });
+
+    it("ignores explicitly-undefined fields instead of clobbering defaults", () => {
+        const options = new ServerOptions({ dotNetPath: undefined, downloadServer: false });
+        expect(options.dotNetPath).toBe("dotnet");
+        expect(options.downloadServer).toBe(false);
+    });
+
+    it("composes with secured()", () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ravendb-embedded-"));
+        const pemPath = path.join(dir, "cert.pem");
+        fs.writeFileSync(pemPath, TEST_PEM_CERT);
+        const options = new ServerOptions({ downloadServer: false }).secured(pemPath);
+        expect(options.downloadServer).toBe(false);
+        expect(options.security).toBeDefined();
+        expect(options.security!.serverCertificateThumbprint).toBe(TEST_PEM_THUMBPRINT);
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+});
+
 describe("ServerOptions.secured", () => {
     it("throws when the certificate file does not exist", () => {
         const options = new ServerOptions();

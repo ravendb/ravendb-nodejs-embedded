@@ -34,6 +34,16 @@ export interface SecurityOptions {
     ca?: Buffer;
 }
 
+/**
+ * Constructor init object for {@link ServerOptions}: every public field, optional.
+ * `licensing` is a partial merged into the defaults; `security` is intentionally
+ * absent — configure it via secured() / securedWithExec().
+ */
+export type ServerOptionsInit =
+    Partial<Omit<ServerOptions, "secured" | "securedWithExec" | "licensing" | "security">> & {
+        licensing?: Partial<LicensingOptions>;
+    };
+
 export class ServerOptions {
     public frameworkVersion: string | null = "10.0.9+";
     public logsPath = path.join(process.cwd(), "RavenDB", "Logs");
@@ -63,6 +73,26 @@ export class ServerOptions {
     public licensing = new LicensingOptions();
     public security?: SecurityOptions;
     public logger?: Logger;
+
+    public constructor(init?: ServerOptionsInit) {
+        if (!init) {
+            return;
+        }
+        const { licensing, ...rest } = init;
+        for (const [key, value] of Object.entries(rest)) {
+            // skip explicitly-undefined entries so they don't clobber defaults
+            if (value !== undefined) {
+                (this as Record<string, unknown>)[key] = value;
+            }
+        }
+        if (licensing) {
+            for (const [key, value] of Object.entries(licensing)) {
+                if (value !== undefined) {
+                    (this.licensing as unknown as Record<string, unknown>)[key] = value;
+                }
+            }
+        }
+    }
 
     public secured(certificate: string, certPassword?: string, serverCertThumbprint?: string, caCertificatePath?: string): this {
         if (!certificate) {
