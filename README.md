@@ -7,11 +7,22 @@ Learn more at https://ravendb.net or visit our [GitHub repository](https://githu
 
 
 ## Installation
-Install the package together with the [`ravendb`](https://www.npmjs.com/package/ravendb) client:
 
 ```bash
-npm install ravendb-embedded ravendb
+npm install ravendb-embedded
 ```
+
+```bash
+pnpm add ravendb-embedded
+```
+
+```bash
+yarn add ravendb-embedded
+```
+
+The [`ravendb`](https://www.npmjs.com/package/ravendb) client is a peer
+dependency — npm and pnpm install it automatically. Yarn does not; add it
+yourself there (`yarn add ravendb`).
 
 No further setup is required: on the first `startServer()` call the package
 downloads the RavenDB server binaries for your platform automatically
@@ -136,17 +147,34 @@ const productNames = await session
 ```
 
 ### Secured server
+
+The server certificate must be a **PKCS#12 (PFX)** file — RavenDB loads
+`Security.Certificate.Path` with the .NET certificate loader, which does not
+parse PEM (a PEM file fails at startup with *"Unable to find the private key
+in the provided certificate"*). Node in turn cannot parse PKCS#12, so the
+thumbprint cannot be computed here — pass it explicitly:
+
 ```ts
-options.secured("/path/to/cert.pem");
-// PFX: Node cannot parse PKCS#12, pass the thumbprint explicitly:
 options.secured("/path/to/cert.pfx", "password", "<server cert thumbprint>");
 // Self-signed certificate: pass its PEM as the CA bundle so the client trusts it:
 options.secured("/path/to/cert.pfx", "password", "<thumbprint>", "/path/to/cert.pem");
 ```
 
+Convert a PEM certificate + key to PFX and compute the thumbprint with:
+
+```bash
+openssl pkcs12 -export -out cert.pfx -inkey key.pem -in cert.pem -passout pass:password
+openssl x509 -in cert.pem -fingerprint -sha1 -noout   # strip the colons
+```
+
+(or in PowerShell: `(Get-PfxCertificate cert.pfx).Thumbprint`; from Node, with
+a PEM copy of the certificate:
+`new crypto.X509Certificate(pem).fingerprint.replace(/:/g, "")`).
+
 The certificate must carry `keyUsage=digitalSignature` and
 `extendedKeyUsage=serverAuth` (RavenDB validates both); add `clientAuth` when
-the same certificate is used as the client certificate.
+the same certificate is used as the client certificate — which is exactly what
+`secured()` does: the PFX also authenticates the document stores.
 
 #### Certificate from a vault/HSM (external program)
 
@@ -223,8 +251,12 @@ store creation, database-already-exists — plus download progress.
 - **Pre-warm the cache** (Docker images, CI):
 
   ```bash
-  npx ravendb-embedded-install [--version 7.2.4] [--dir /path/to/cache]
+  pnpm ravendb install            # pinned default version (the release this package was tested against)
+  pnpm ravendb install 7.2.4      # specific version (or "latest")
+  pnpm ravendb install 7.2.4 --dir /path/to/cache
   ```
+
+  (`npx ravendb install ...` / `yarn ravendb install ...` work the same way.)
 
 - **Integrity:** downloads run over HTTPS and are verified against the
   response `Content-Length` (truncated downloads are rejected). RavenDB does
@@ -234,10 +266,12 @@ store creation, database-already-exists — plus download progress.
   version+platform):
 
   ```bash
-  npx ravendb-embedded-install --clear-cache [--keep 7.2.5] [--dir /path/to/cache]
+  pnpm ravendb clear-cache --keep 7.2.5 --dir /path/to/cache
   ```
 
-  or from code: `ServerDownloader.clearCache({ keepVersions: ["7.2.5"] })`.
+  The command asks for confirmation before removing anything; pass `--yes`
+  to skip the prompt (required in non-interactive sessions such as CI).
+  Or from code: `ServerDownloader.clearCache({ keepVersions: ["7.2.5"] })`.
 
 ## Learning resources
 - **Embedded Server Guide** - https://ravendb.net/articles/building-a-beer-vending-machine-program-with-ravendb-embedded-server 🛣️

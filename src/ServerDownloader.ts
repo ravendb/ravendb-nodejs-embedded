@@ -26,8 +26,8 @@ export const downloadProgressLogger: Logger = {
     warn: (message, error) => process.stderr.write(`${message}${error ? ` ${String(error)}` : ""}\n`)
 };
 
-function formatMegabytes(bytes: number): string {
-    return `${Math.round(bytes / (1024 * 1024))} MB`;
+function formatMebibytes(bytes: number): string {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 interface ProgressReporter {
@@ -40,12 +40,13 @@ interface ProgressReporter {
 // log lines instead, so their output stays append-only.
 function createProgressReporter(log: Logger, expectedBytes: number): ProgressReporter {
     if (log === downloadProgressLogger && process.stderr.isTTY) {
-        const barWidth = 30;
+        const barWidth = 20;
+        const startedAt = Date.now();
         let lastRendered = -1;
         let dirty = false;
         return {
             report: receivedBytes => {
-                // redraw at most once per percent (or per MB when the total is unknown)
+                // redraw at most once per percent (or per MiB when the total is unknown)
                 const step = expectedBytes > 0
                     ? Math.floor((receivedBytes / expectedBytes) * 100)
                     : Math.floor(receivedBytes / (1024 * 1024));
@@ -56,12 +57,17 @@ function createProgressReporter(log: Logger, expectedBytes: number): ProgressRep
                 dirty = true;
                 let line: string;
                 if (expectedBytes > 0) {
+                    // Playwright-style: "183.6 MiB [====================] 100% 0.0s"
                     const percent = Math.min(100, step);
                     const filled = Math.floor((percent / 100) * barWidth);
-                    const bar = "█".repeat(filled) + "▒".repeat(barWidth - filled);
-                    line = `[${bar}] ${percent}% (${formatMegabytes(receivedBytes)} of ${formatMegabytes(expectedBytes)})`;
+                    const bar = "=".repeat(filled) + " ".repeat(barWidth - filled);
+                    const elapsedSeconds = (Date.now() - startedAt) / 1000;
+                    const etaSeconds = receivedBytes > 0
+                        ? (elapsedSeconds / receivedBytes) * Math.max(0, expectedBytes - receivedBytes)
+                        : 0;
+                    line = `${formatMebibytes(expectedBytes)} [${bar}] ${percent}% ${etaSeconds.toFixed(1)}s`;
                 } else {
-                    line = `Downloaded ${formatMegabytes(receivedBytes)}`;
+                    line = `Downloaded ${formatMebibytes(receivedBytes)}`;
                 }
                 process.stderr.write(`\r${line}`);
             },
@@ -84,11 +90,11 @@ function createProgressReporter(log: Logger, expectedBytes: number): ProgressRep
                 if (decile > lastReportedDecile) {
                     lastReportedDecile = decile;
                     const percent = Math.floor((receivedBytes / expectedBytes) * 100);
-                    log.info(`Downloaded ${formatMegabytes(receivedBytes)} of ${formatMegabytes(expectedBytes)} (${percent}%)`);
+                    log.info(`Downloaded ${formatMebibytes(receivedBytes)} of ${formatMebibytes(expectedBytes)} (${percent}%)`);
                 }
             } else if (receivedBytes >= nextReportBytes) {
                 nextReportBytes += PROGRESS_STEP_BYTES;
-                log.info(`Downloaded ${formatMegabytes(receivedBytes)}`);
+                log.info(`Downloaded ${formatMebibytes(receivedBytes)}`);
             }
         },
         finish: () => {}
@@ -226,7 +232,7 @@ export class ServerDownloader {
             const archiveFile = `${installDir}.download-${process.pid}.${serverPlatform.ext}`;
             const extractDir = `${installDir}.tmp-${process.pid}`;
             try {
-                log.info(`Downloading RavenDB server ${version} (${serverPlatform.platform}) from ${downloadUrl} to ${installDir}`);
+                log.info(`Downloading RavenDB server ${version} (${serverPlatform.platform}) from ${downloadUrl}`);
                 await this.downloadArchive(downloadUrl, archiveFile, log);
                 fs.rmSync(extractDir, { recursive: true, force: true });
                 fs.mkdirSync(extractDir, { recursive: true });
@@ -234,7 +240,8 @@ export class ServerDownloader {
                 await this.extractArchive(archiveFile, extractDir, serverPlatform.ext);
                 this._makeExecutable(extractDir);
                 fs.renameSync(extractDir, installDir);
-                log.info(`RavenDB server ${version} is ready in ${installDir}`);
+                // completion is not logged here — callers (the CLI, EmbeddedServer.start)
+                // report readiness themselves, and a duplicate line would be printed
             } catch (error: unknown) {
                 if (error instanceof ServerDownloadError) {
                     throw error;

@@ -255,9 +255,9 @@ describe("ServerDownloader.downloadArchive", () => {
         expect(messages.length).toBeGreaterThanOrEqual(1);
         expect(messages.length).toBeLessThanOrEqual(4);
         for (const message of messages) {
-            expect(message).toMatch(/^Downloaded 0 MB of 0 MB \(\d+%\)$/);
+            expect(message).toMatch(/^Downloaded 0\.0 MiB of 0\.0 MiB \(\d+%\)$/);
         }
-        expect(messages.at(-1)).toBe("Downloaded 0 MB of 0 MB (100%)");
+        expect(messages.at(-1)).toBe("Downloaded 0.0 MiB of 0.0 MiB (100%)");
     });
 
     it("draws an in-place progress bar for the default logger on a TTY", async () => {
@@ -288,9 +288,11 @@ describe("ServerDownloader.downloadArchive", () => {
             process.stderr.isTTY = originalIsTty;
         }
 
-        const barWrites = writes.filter(w => w.startsWith("\r["));
+        // Playwright-style: "0.0 MiB [====================] 100% 0.0s"
+        const barWrites = writes.filter(w => w.startsWith("\r0.0 MiB ["));
         expect(barWrites.length).toBeGreaterThanOrEqual(1);
-        expect(barWrites.at(-1)).toBe(`\r[${"█".repeat(30)}] 100% (0 MB of 0 MB)`);
+        expect(barWrites.at(-1)).toMatch(
+            new RegExp(`^\r0\\.0 MiB \\[={20}\\] 100% \\d+\\.\\ds$`));
         expect(writes.at(-1)).toBe("\n");
     });
 
@@ -313,7 +315,7 @@ describe("ServerDownloader.downloadArchive", () => {
             process.stderr.isTTY = originalIsTty;
         }
 
-        expect(writes).toEqual(["Downloaded 0 MB of 0 MB (100%)\n"]);
+        expect(writes).toEqual(["Downloaded 0.0 MiB of 0.0 MiB (100%)\n"]);
     });
 
     it("stays silent without a logger", async () => {
