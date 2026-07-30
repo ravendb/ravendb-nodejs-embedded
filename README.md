@@ -17,12 +17,11 @@ pnpm add ravendb-embedded
 ```
 
 ```bash
-yarn add ravendb-embedded
+yarn add ravendb-embedded ravendb
 ```
 
 The [`ravendb`](https://www.npmjs.com/package/ravendb) client is a peer
-dependency — npm and pnpm install it automatically. Yarn does not; add it
-yourself there (`yarn add ravendb`).
+dependency — npm and pnpm install it automatically. Yarn does not.
 
 No further setup is required: on the first `startServer()` call the package
 downloads the RavenDB server binaries for your platform automatically
