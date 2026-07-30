@@ -1,13 +1,42 @@
 {
   "name": "ravendb-embedded",
   "version": "7.2.5",
-  "description": "RavenDB embedded server for Node.js — runs a local RavenDB server as a child process",
+  "description": "RavenDB embedded server for Node.js: runs a local RavenDB server as a child process",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "ravendb": "bin/install.js"
   },
   "files": ["dist", "bin"],
+  "keywords": [
+    "ravendb",
+    "embedded",
+    "database",
+    "nosql",
+    "document-database",
+    "document-store",
+    "server",
+    "testing",
+    "integration-testing",
+    "in-memory"
+  ],
+  "author": "RavenDB <support@ravendb.net> (https://ravendb.net)",
+  "contributors": [
+    "Hibernating Rhinos (https://hibernatingrhinos.com)",
+    "RavenDB (https://ravendb.net)"
+  ],
+  "license": "MIT",
+  "homepage": "https://ravendb.net",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ravendb/ravendb-nodejs-embedded.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ravendb/ravendb-nodejs-embedded/issues"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -22,6 +51,5 @@
     "ravendb": "^7.2.5",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
-  },
-  "private": true
+  }
 }
