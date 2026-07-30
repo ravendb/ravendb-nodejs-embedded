@@ -5,9 +5,9 @@ permissions:
 
 on:
   push:
-    branches: [ master ]
+    branches: [ v7.2 ]
   pull_request:
-    branches: [ master ]
+    branches: [ v7.2 ]
   schedule:
     - cron: '0 10 * * *'
   workflow_dispatch:
@@ -27,7 +27,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [22.x, 24.x]
+        node-version: [22.x, 24.x, 26.x]
         serverVersion: ["6.2", "7.1", "7.2"]
       fail-fast: false
 
