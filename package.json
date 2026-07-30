@@ -7,7 +7,10 @@
   "bin": {
     "ravendb": "bin/install.js"
   },
-  "files": ["dist", "bin"],
+  "files": [
+    "dist",
+    "bin"
+  ],
   "keywords": [
     "ravendb",
     "embedded",
@@ -48,7 +51,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "ravendb": "^7.2.5",
+    "ravendb": "^7.2.6",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
